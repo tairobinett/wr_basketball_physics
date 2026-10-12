@@ -90,5 +90,22 @@ export function clamp(x: number, lo: number, hi: number): number {
   return x < lo ? lo : x > hi ? hi : x;
 }
 
+/**
+ * Distance from point p to the segment ab.
+ *
+ * Used to measure how close a trajectory passed to something. Sampling the distance at step
+ * endpoints alone would be step-size dependent — at 4 m/s the ball moves 1.7 cm per step and can
+ * skip straight past the closest point — so clearances are measured against the swept segment
+ * instead, which is exact for piecewise-linear motion.
+ */
+export function distPointSegment(p: Vec2, a: Vec2, b: Vec2): number {
+  const ab = sub(b, a);
+  const l2 = len2(ab);
+  if (l2 < 1e-20) return dist(p, a);
+  let t = dot(sub(p, a), ab) / l2;
+  t = t < 0 ? 0 : t > 1 ? 1 : t;
+  return dist(p, addScaled(a, ab, t));
+}
+
 export const DEG_TO_RAD = Math.PI / 180;
 export const RAD_TO_DEG = 180 / Math.PI;

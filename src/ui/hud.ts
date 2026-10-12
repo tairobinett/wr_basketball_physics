@@ -45,7 +45,7 @@ export function createHud(): HudHandle {
   shot.className = 'stats';
   const sApex = statRow('apex');
   const sEntry = statRow('entry angle');
-  const sClear = statRow('front rim clear');
+  const sClear = statRow('rim clearance');
   const sClosest = statRow('closest approach');
   const sContacts = statRow('contacts');
   shot.append(sApex.row, sEntry.row, sClear.row, sClosest.row, sContacts.row);
@@ -77,7 +77,10 @@ export function createHud(): HudHandle {
       sApex.value.textContent = `${summary.apexY.toFixed(2)} m`;
       sEntry.value.textContent =
         summary.entryAngleDeg === null ? '—' : `${summary.entryAngleDeg.toFixed(1)}°`;
-      sClear.value.textContent = `${(summary.frontRimClearance * 100).toFixed(1)} cm`;
+      sClear.value.textContent =
+        summary.contacts.rim > 0
+          ? 'hit rim'
+          : `${(summary.rimClearance * 100).toFixed(1)} cm`;
       sClosest.value.textContent = `${(summary.closestApproach * 100).toFixed(1)} cm`;
       sContacts.value.textContent =
         `${summary.totalContacts}` +

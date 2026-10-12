@@ -58,6 +58,7 @@ import {
 } from './ui/controls.js';
 import { createHud } from './ui/hud.js';
 import { createLogPanel } from './ui/logpanel.js';
+import { createTablePanel } from './ui/table.js';
 
 // ---------------------------------------------------------------------------------------------
 // State
@@ -464,18 +465,56 @@ function setOverride(id: MaterialId, e: number, mu: number): void {
 // --- Log drawer ------------------------------------------------------------------------------
 
 const logPanel = createLogPanel(logger);
+
+const tablePanel = createTablePanel({
+  getWorld: () => world,
+  getShooterX: () => params.shooterX,
+  getReleaseY: () => params.releaseY,
+  getFlags: () => ({ drag: params.drag, magnus: params.magnus }),
+  getOverrides: () => (Object.keys(overrides).length > 0 ? overrides : undefined),
+  onPickShot: (angleDeg, speed) => {
+    // Load the cell's shot into the controls and fire it, so a table cell can be inspected as a
+    // real trajectory. The table and the court are the same physics, so it will do exactly what
+    // the cell says.
+    reset();
+    setAngle(angleDeg);
+    setSpeed(speed);
+    rebuildGhost();
+    release();
+  },
+});
+
 const drawer = document.createElement('div');
 drawer.className = 'drawer';
 const drawerHead = document.createElement('div');
 drawerHead.className = 'drawer-head';
-const drawerTitle = document.createElement('h2');
-drawerTitle.textContent = 'Log';
+
+const tabs = document.createElement('div');
+tabs.className = 'tabs';
+const logTab = createButton('Log', () => showTab('log'), 'tab on');
+const tableTab = createButton('Outcome table', () => showTab('table'), 'tab');
+tabs.append(logTab, tableTab);
+
 const collapseBtn = createButton('hide', () => {
   drawer.classList.toggle('collapsed');
   collapseBtn.textContent = drawer.classList.contains('collapsed') ? 'show' : 'hide';
 });
-drawerHead.append(drawerTitle, collapseBtn);
-drawer.append(drawerHead, logPanel.el);
+
+drawerHead.append(tabs, collapseBtn);
+drawer.append(drawerHead, logPanel.el, tablePanel.el);
+
+function showTab(which: 'log' | 'table'): void {
+  const onLog = which === 'log';
+  logPanel.el.classList.toggle('hidden', !onLog);
+  tablePanel.el.classList.toggle('hidden', onLog);
+  logTab.className = onLog ? 'tab on' : 'tab';
+  tableTab.className = onLog ? 'tab' : 'tab on';
+  // Opening a tab on a collapsed drawer should open the drawer too.
+  drawer.classList.remove('collapsed');
+  collapseBtn.textContent = 'hide';
+}
+
+showTab('log');
 
 app.append(canvasWrap, panel, drawer);
 

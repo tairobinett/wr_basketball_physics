@@ -79,6 +79,29 @@ describe('early abort agrees with full simulation', () => {
     }
   });
 
+  it('reports identical statistics, not just identical outcomes', () => {
+    // The outcome table is generated with earlyAbort and read as if it described the same shot the
+    // court shows. That only holds if every reported statistic is frozen at the same moment in both
+    // modes — clearance especially, since it is the client-facing number.
+    const rand = mulberry32(0xc0ffee);
+    for (let i = 0; i < 60; i++) {
+      const d = shot(30 + rand() * 50, 6 + rand() * 3);
+      const full = runShot(REG_WORLD, d, { earlyAbort: false }).summary;
+      const quick = runShot(REG_WORLD, d, { earlyAbort: true }).summary;
+      const label = `angle=${d.angleDeg} speed=${d.speed}`;
+
+      expect(quick.outcome, label).toBe(full.outcome);
+      expect(quick.scored, label).toBe(full.scored);
+      // Bitwise equality, not approximate.
+      expect(quick.rimClearance, label).toBe(full.rimClearance);
+      expect(quick.frontRimClearance, label).toBe(full.frontRimClearance);
+      expect(quick.backRimClearance, label).toBe(full.backRimClearance);
+      expect(quick.closestApproach, label).toBe(full.closestApproach);
+      expect(quick.apexY, label).toBe(full.apexY);
+      expect(quick.entryAngleDeg, label).toBe(full.entryAngleDeg);
+    }
+  });
+
   it('actually saves work', () => {
     const d = shot(70, 5);
     const full = new Simulation(REG_WORLD);
@@ -155,11 +178,14 @@ describe('scoring state machine', () => {
     }
   });
 
-  it('never reports negative front-rim clearance without a rim contact', () => {
+  it('only reports a zero rim clearance when the ball actually hit the rim', () => {
     const rand = mulberry32(0x1234);
     for (let i = 0; i < 100; i++) {
       const res = runShot(REG_WORLD, shot(25 + rand() * 60, 5 + rand() * 5));
-      if (res.summary.frontRimClearance < -1e-6) {
+      // Swept resolution means the ball never interpenetrates, so clearance bottoms out at 0
+      // (within the contact skin) and only does so on a genuine rim strike.
+      expect(res.summary.rimClearance).toBeGreaterThan(-1e-3);
+      if (res.summary.rimClearance < 1e-6) {
         expect(res.summary.contacts.rim).toBeGreaterThan(0);
       }
     }

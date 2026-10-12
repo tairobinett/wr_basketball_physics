@@ -123,6 +123,69 @@ describe('app boots', () => {
     expect(help?.classList.contains('hidden')).toBe(true);
   });
 
+  it('switches to the outcome table tab', () => {
+    const tabs = [...document.querySelectorAll('button.tab')] as HTMLButtonElement[];
+    const tableTab = tabs.find((b) => b.textContent === 'Outcome table');
+    expect(tableTab).toBeDefined();
+    tableTab?.click();
+    expect(document.querySelector('.tablepanel')?.classList.contains('hidden')).toBe(false);
+    expect(document.querySelector('.logpanel')?.classList.contains('hidden')).toBe(true);
+  });
+
+  it('generates a table with a binary result and a clearance per cell', async () => {
+    // jsdom has no Worker, so this runs the synchronous fallback — same pure sweep function.
+    const buttons = [...document.querySelectorAll('.tablebar button')] as HTMLButtonElement[];
+    const gen = buttons.find((b) => b.textContent === 'Generate table');
+    expect(gen).toBeDefined();
+    gen?.click();
+
+    // Let the (already-resolved) promise and its .then chain flush.
+    await new Promise((r) => setTimeout(r, 0));
+
+    const table = document.querySelector('table.outcome-table');
+    expect(table).not.toBeNull();
+
+    const headers = [...(table?.querySelectorAll('thead th') ?? [])].map((h) => h.textContent);
+    // Corner plus one column per angle in the default 40-65 range at 2.5 deg steps.
+    expect(headers.length).toBe(1 + 11);
+    expect(headers[1]).toBe('40°');
+
+    const rows = table?.querySelectorAll('tbody tr') ?? [];
+    expect(rows.length).toBe(61); // 6.8 to 8.0 m/s at 0.02 steps
+
+    const cells = [...(table?.querySelectorAll('tbody td') ?? [])];
+    expect(cells.length).toBe(11 * 61);
+
+    // Every cell carries the binary make and a clearance figure.
+    for (const td of cells) {
+      const made = td.querySelector('b')?.textContent;
+      expect(['0', '1']).toContain(made);
+      const clearance = td.querySelector('.clearance')?.textContent ?? '';
+      expect(clearance === 'hit' || Number.isFinite(Number(clearance))).toBe(true);
+    }
+
+    // The default window straddles the make band, so the table must contain both results.
+    const madeValues = cells.map((td) => td.querySelector('b')?.textContent);
+    expect(madeValues).toContain('1');
+    expect(madeValues).toContain('0');
+
+    // And the summary line reports the make rate plus the widest margin found.
+    const summary = [...document.querySelectorAll('.exports .control-hint')]
+      .map((n) => n.textContent)
+      .join(' ');
+    expect(summary).toMatch(/\d+ \/ \d+ made/);
+    expect(summary).toMatch(/widest margin: \d+(\.\d+)? cm/);
+  });
+
+  it('fires the shot for a table cell that is clicked', () => {
+    const made = [...document.querySelectorAll('table.outcome-table td.made')] as HTMLElement[];
+    expect(made.length).toBeGreaterThan(0);
+    made[0]?.click();
+    // The court is now simulating that cell's shot, and the log recorded the release.
+    const logText = document.querySelector('.logout')?.textContent ?? '';
+    expect(logText).toContain('RELEASE');
+  });
+
   it('offers the log filters and exports', () => {
     const chips = [...document.querySelectorAll('.chip')].map((c) => c.textContent);
     expect(chips).toContain('collision');

@@ -302,10 +302,11 @@ button.primary {
   background: var(--panel);
   display: flex;
   flex-direction: column;
-  max-height: 300px;
+  max-height: 46vh;
 }
 
-.drawer.collapsed .logpanel {
+.drawer.collapsed .logpanel,
+.drawer.collapsed .tablepanel {
   display: none;
 }
 
@@ -401,6 +402,160 @@ button.primary {
   padding: 4px 12px;
   font-size: 11px;
   color: var(--muted);
+}
+
+/* --- Drawer tabs ---------------------------------------------------------------------------- */
+
+.tabs {
+  display: flex;
+  gap: 4px;
+  flex: 1;
+}
+
+button.tab {
+  background: transparent;
+  border: 1px solid transparent;
+  border-bottom: none;
+  color: var(--muted);
+  border-radius: 4px 4px 0 0;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+button.tab.on {
+  background: var(--panel-2);
+  border-color: var(--line);
+  color: var(--text);
+}
+
+.hidden {
+  display: none !important;
+}
+
+/* --- Outcome table -------------------------------------------------------------------------- */
+
+.tablepanel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.tablebar {
+  display: flex;
+  gap: 18px;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  padding: 0 12px 8px;
+}
+
+.tablebar.exports {
+  gap: 8px;
+  align-items: center;
+  border-top: 1px solid var(--line);
+  padding-top: 8px;
+}
+
+.spec-group {
+  display: flex;
+  gap: 10px;
+  align-items: flex-end;
+}
+
+.control.compact {
+  width: 120px;
+  margin: 0;
+}
+
+.control.compact .control-head label {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.tablescroll {
+  overflow: auto;
+  max-height: 420px;
+  padding: 0 12px 12px;
+  min-height: 60px;
+}
+
+.tableprogress {
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: 16px 0;
+  color: var(--muted);
+}
+
+table.outcome-table {
+  border-collapse: separate;
+  border-spacing: 1px;
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+table.outcome-table th {
+  position: sticky;
+  background: var(--panel);
+  color: var(--muted);
+  font-weight: 500;
+  font-size: 10px;
+  padding: 3px 5px;
+  z-index: 1;
+}
+
+table.outcome-table thead th {
+  top: 0;
+}
+
+table.outcome-table th.corner {
+  left: 0;
+  top: 0;
+  z-index: 2;
+  text-align: left;
+  line-height: 1.25;
+}
+
+table.outcome-table th.rowhead {
+  left: 0;
+  text-align: right;
+  white-space: nowrap;
+}
+
+table.outcome-table th.rowhead small {
+  color: #5f6d80;
+  font-size: 9px;
+}
+
+table.outcome-table td {
+  text-align: center;
+  padding: 2px 4px;
+  min-width: 42px;
+  border-radius: 2px;
+  cursor: pointer;
+  line-height: 1.2;
+}
+
+table.outcome-table td:hover {
+  outline: 1px solid var(--text);
+}
+
+table.outcome-table td b {
+  display: block;
+  font-size: 11px;
+}
+
+table.outcome-table td.made b {
+  color: #d6ffe8;
+}
+
+table.outcome-table td.missed b {
+  color: #ffd9d8;
+}
+
+table.outcome-table td .clearance {
+  display: block;
+  font-size: 9px;
+  color: rgba(255, 255, 255, 0.62);
 }
 
 @media (max-width: 900px) {

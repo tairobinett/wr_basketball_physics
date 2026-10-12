@@ -62,7 +62,9 @@ function run(c: Case) {
     flightTime: +s.flightTime.toFixed(6),
     entryAngleDeg: s.entryAngleDeg === null ? null : +s.entryAngleDeg.toFixed(4),
     closestApproach: +s.closestApproach.toFixed(6),
+    rimClearance: +s.rimClearance.toFixed(6),
     frontRimClearance: +s.frontRimClearance.toFixed(6),
+    backRimClearance: +s.backRimClearance.toFixed(6),
     contacts: s.contacts,
     finalP: { x: +s.finalP.x.toFixed(6), y: +s.finalP.y.toFixed(6) },
   };

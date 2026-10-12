@@ -16,7 +16,7 @@ decisions log.
 npm install
 npm run dev        # dev server (prints the URL)
 npm run build      # typecheck + production build into dist/
-npm test           # 48 tests
+npm test           # 74 tests
 npm run typecheck  # tsc --noEmit
 ```
 
@@ -58,15 +58,38 @@ The make window is only ~0.14 m/s wide, so hold `Shift` when hunting for it.
 Every shot is encoded in the URL hash. Copying the address bar shares that exact shot, because the
 sim is deterministic — see DESIGN.md §4.1.
 
+## Outcome table
+
+The **Outcome table** tab in the bottom drawer sweeps power against release angle and reports two
+numbers per cell:
+
+- **`1` / `0`** — basket or miss. Each cell is a full simulation with an exact verdict; there is no
+  sampling or probability anywhere in it.
+- **rim clearance, in centimetres** — how close the ball's surface came to the nearest rim tube.
+  It tops out at **10.9 cm** (`R_RIM - R_BALL`), which is a ball falling dead centre through the
+  hoop, so for a made shot the number says how good the make was. A cell reads **`hit`** when the
+  ball actually struck the iron, which is clearance zero.
+
+Set the angle and speed ranges and steps, hit Generate, and click any cell to fire that exact shot
+on the court. Exports: long CSV (one row per cell), make-matrix CSV, clearance-matrix CSV, and JSON.
+
+The sweep runs in a Web Worker so the UI stays responsive, at roughly 0.25 ms per simulated shot.
+
+Worth knowing when reading a table: through the middle of the make band most shots graze the rim,
+so a coarse table fills up with `hit`. That is real — the hoop is 45.7 cm and the ball 23.9 cm, so
+the clean gap is 21.8 cm and about ±11 cm of arrival error touches iron. The default speed step of
+0.02 m/s (≈3 cm of arrival shift) is fine enough to show the gradient instead.
+
 ## Layout
 
 ```
 src/core/     the sim: pure, no DOM, no clock, no randomness
 src/log/      structured events, ring buffer, text/JSON/CSV formatting
 src/render/   camera and canvas drawing
-src/ui/       controls, HUD, log drawer
+src/ui/       controls, HUD, log drawer, outcome table
+src/sweep/    the batch sweep: pure grid, worker, main-thread client
 src/levels/   level schema, validator, and the regulation court
-tests/        analytic, collision, determinism, golden and boot tests
+tests/        analytic, collision, determinism, sweep, golden and boot tests
 ```
 
 The dependency rule: `core/` imports from nothing else in the project. That is what lets the same
@@ -74,10 +97,10 @@ code run the interactive sim, the predicted-arc ghost, the test suite, and (next
 
 ## Status
 
-M0–M6 of the design are implemented: geometry, integrator, collisions, controls, logging, scoring
-and tests. **M7, the outcome map** (sweep the angle/power space and draw which shots go in), is the
-next piece of work. Stretch items — level editor, wind, user-facing spin — are scoped in DESIGN.md
-but not built; air drag and Magnus are implemented behind default-off toggles.
+M0–M7 of the design are implemented: geometry, integrator, collisions, controls, logging, scoring,
+the outcome table, and tests. Remaining, all scoped in DESIGN.md but not built: a heatmap view over
+the same sweep, the level editor and obstacles, wind, and a user-facing spin control. Air drag and
+Magnus are implemented behind default-off toggles.
 
 ## Physics notes
 

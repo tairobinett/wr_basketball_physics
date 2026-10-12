@@ -66,7 +66,8 @@ export function formatEvent(ev: LogEvent): string {
       return (
         `${stamp} RESULT    ${ev.outcome.toUpperCase().padEnd(11)} (${ev.reason}) ` +
         `apex=${s.apexY.toFixed(2)}m flight=${s.flightTime.toFixed(2)}s entry=${entry} ` +
-        `closest=${s.closestApproach.toFixed(3)}m frontRimClear=${s.frontRimClearance.toFixed(3)}m ` +
+        `closest=${s.closestApproach.toFixed(3)}m rimClear=${s.rimClearance.toFixed(4)}m ` +
+        `(front=${s.frontRimClearance.toFixed(4)} back=${s.backRimClearance.toFixed(4)}) ` +
         `contacts=${s.totalContacts} (floor=${s.contacts.floor} board=${s.contacts.board} ` +
         `rim=${s.contacts.rim} obstacle=${s.contacts.obstacle}) resting=${s.restingContacts}`
       );

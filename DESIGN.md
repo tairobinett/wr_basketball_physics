@@ -1,6 +1,6 @@
 # Free Throw Simulator — Design Doc
 
-Status: **M0–M6 implemented** (48 tests passing) · M7 outstanding · Date: 2026-10-11 ·
+Status: **M0–M7 implemented** (74 tests passing) · Date: 2026-10-12 ·
 Repo: `wr_basketball_physics`
 
 Where the build corrected this document, the document has been corrected rather than quietly
@@ -522,7 +522,8 @@ unglamorous — the schema and the pure core do the real work.
 | M4 | Logging subsystem, log panel, export, replay-by-descriptor | **done** |
 | M5 | Scoring state machine, outcome classification, shot stats | **done** |
 | M6 | Tests from §10, including determinism and replay-equality checks | **done** (48 tests) |
-| M7 | Outcome map: worker pool, sweep, heatmap panel, click-to-load (§12) | next |
+| M7 | Outcome **table**: worker sweep, table panel, clearance column, click-to-load, CSV/JSON export (§12) | **done** |
+| M7b | Heatmap view over the same sweep | optional |
 | S1 | Drag + wind + Magnus + release-spin slider, material table in UI | partial: drag and Magnus are implemented behind default-off flags with UI toggles; wind has a World field but no UI; release-spin slider deliberately absent |
 | S2 | Level format + editor + obstacles | format done, editor outstanding |
 
@@ -540,11 +541,48 @@ tuned for:
 
 ---
 
-## 12. Outcome map (batch sweep)
+## 12. Outcome table (batch sweep)
 
-Sweep a grid over release angle × release power, for the current shooter position and release
-height, classify every shot, and draw the result as a heatmap: angle on the x-axis, power on the
-y-axis, one colour per outcome class from §6.
+**Built as a table rather than a heatmap**, at the client's request: power down the side, release
+angle across the top, and two numbers in every cell — a binary `1`/`0` for basket/miss, and the
+**rim clearance** in centimetres. Colour shading is kept as a background hint, but the numbers are
+the deliverable, and every view exports to CSV.
+
+### Rim clearance
+
+Defined as: the shortest distance from the **ball's surface** to the **nearest rim tube's surface**,
+over the whole flight. Properties that make it readable:
+
+- **Geometric ceiling of 10.89 cm** (`R_RIM - R_BALL`), reached by a ball falling dead centre
+  through the hoop. So for a made shot the number runs 0 → 10.9 and is a direct measure of how good
+  the make was.
+- **Zero means it hit the iron.** Swept collision resolution means the ball never interpenetrates,
+  so clearance bottoms out at 0 rather than going negative. The cell prints `hit` instead of `0.0`
+  so the reading is never ambiguous, and `rim_contacts` is in the export for the same reason.
+- **Measured against the swept path, not step endpoints.** The ball covers ~1.7 cm per step near the
+  rim, so endpoint sampling would inflate a 3 cm clearance by up to half a step — a large fraction
+  of the quantity being reported. Clearances use point-to-segment distance against each step's
+  travel, which is exact for piecewise-linear motion.
+- **Clamped to 0 on a recorded rim contact.** This is not redundant with the above: a collision
+  *bends* the path mid-step, so the straight chord from step start to step end passes farther from
+  the tube than the ball actually did. Without the clamp a shot that demonstrably struck the rim
+  reported 3.7 mm of clearance, contradicting its own contact count.
+- **Frozen at the same moment in every run mode** (§6), so a table cell reports exactly what the
+  HUD reports after firing that same shot. Asserted bitwise over 60 randomised shots.
+
+Known property, not a defect: through the interesting part of the band most shots graze the rim, so
+at coarse resolution the clearance column fills with `hit`. That is a true fact about free throws —
+the hoop is 45.7 cm, the ball 23.9 cm, so the clean gap is 21.8 cm and ±11 cm of arrival error
+touches iron. The default speed step is 0.02 m/s (≈3 cm of arrival shift) so the first table shows
+the gradient rather than a wall of zeros. If a continuous measure is wanted *through* the strikes,
+the option is to measure against the collision-free trajectory instead, giving a signed number
+(negative = how deep into the tube the undisturbed arc would have passed). That is a different
+quantity and a second simulation per cell; not built, and noted here as an open choice.
+
+### Heatmap view
+
+Still worth having eventually, and cheap now that the sweep exists: angle on the x-axis, power on
+the y-axis, one colour per outcome class from §6.
 
 The expected picture is the interesting part. The set of (angle, power) pairs that score is a thin
 curved **band**, because for most angles there is exactly one power that drops the ball through the
@@ -560,7 +598,10 @@ and the project is committed to being deterministic end to end. The band's *widt
 how forgiving a region is, without inventing a variance parameter to tune.
 
 **Performance.** A naive sweep is expensive: 15 s of sim at 240 Hz is ~3600 steps, so a 200×200
-grid is 40k shots and ~144M steps. Four things bring that down to a couple of seconds:
+grid is 40k shots and ~144M steps. Of the four mitigations below, (1) and (2) are implemented and
+(3) is implemented as a single worker — measured at ~0.25 ms per shot, so the 671-cell default table
+completes in well under a second and a 10k-cell table in ~2.5 s. A worker *pool* and (4) are not
+built, and are not needed until the grid grows past ~20k cells:
 
 1. **Early abort.** The sweep doesn't need rest states, only outcomes. Stop as soon as the outcome
    is decided — plane crossed, or the ball has descended past rim height beyond any chance of
@@ -573,10 +614,15 @@ grid is 40k shots and ~144M steps. Four things bring that down to a couple of se
    adjacent to an outcome boundary. The map appears instantly and sharpens; most of the interior is
    uniform and never needs refining.
 
-**UI.** A panel with the heatmap, a legend per outcome class, and crosshairs showing where the
-current shot parameters sit on the map. Clicking a cell loads those parameters into the controls and
-fires the shot — so the map doubles as a shot browser. The map recomputes when shooter x or release
-height changes (debounced), since those change the whole geometry of the problem.
+**UI.** A tab in the bottom drawer alongside the log. Six range controls (angle and speed: from, to,
+step), a live cell count that warns above 6000, a progress readout, and cancel. Clicking any cell
+loads that shot into the controls and fires it, so the table doubles as a shot browser — and since
+both come from the same core, the court always does exactly what the cell says. The table is
+generated on demand rather than recomputed on every parameter change, because a sweep is a
+deliberate act, not a side effect of nudging a slider.
+
+Exports: long CSV (one row per cell — for plotting), make-matrix CSV and clearance-matrix CSV (for
+pasting into a spreadsheet), and JSON (everything, including the spec and `physicsVersion`).
 
 ---
 
@@ -610,6 +656,8 @@ trust from an earlier read:
 | Resting contacts | counted and logged like impacts | counted separately, never logged individually | A ball sitting on the floor generated 453 "contacts" in one golden shot (§5.5). |
 | Classification inputs | read live at resolve time | frozen when the outcome becomes certain | Otherwise a swept run and an interactive run disagree on shots that rattle *after* dropping in (§6). |
 | `server.watch` | default | `usePolling: true` | Windows Vite cannot `fs.watch` the repo over `\\wsl.localhost` — it dies with EISDIR. See README. |
+| Rim clearance | front rim only, sampled at step endpoints, frozen at the scoring instant | nearest of both tubes, measured against the swept path, frozen after the ball passes the rim, clamped to 0 on contact | Promoting clearance to a reported client-facing number exposed three separate ways the old stat was wrong — each worth a few millimetres to centimetres on a quantity that tops out at 10.9 cm (§12). |
+| M7 output | heatmap | table of 1/0 + clearance, with a heatmap as an optional follow-up | Client asked for a table. |
 
 On (7): the work is directed by one person, which sets two priorities. **Changeability over
 polish** — expect revisions to defaults, geometry, and feel, so constants live in one table (§3),

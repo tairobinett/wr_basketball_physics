@@ -13,10 +13,10 @@
 
 import type { BallState } from './ball.js';
 import type { Collider } from './colliders.js';
-import { contactRole } from './colliders.js';
+import { COLLIDER_IDS, contactRole } from './colliders.js';
 import { G, R_BALL, RIM_TUBE_R } from './constants.js';
 import type { Metres, Seconds, Vec2 } from './units.js';
-import { dist, len, len2, RAD_TO_DEG, v2 } from './units.js';
+import { dist, distPointSegment, len, len2, RAD_TO_DEG, v2 } from './units.js';
 import type { GoalGeometry } from './world.js';
 
 export type Outcome =
@@ -67,8 +67,23 @@ export interface ShotSummary {
   readonly entryAngleDeg: number | null;
   /** Speed at the scoring plane (m/s); null if it never crossed. */
   readonly entrySpeed: number | null;
-  /** Closest the ball's surface came to the front rim tube (m). Negative means it hit it. */
+  /**
+   * Closest the ball's SURFACE came to either rim tube's surface, over the whole flight (m).
+   *
+   * This is the "how close did it come to the iron" number. Zero means it struck the rim — swept
+   * collision resolution means the ball never interpenetrates, so a contact reads as 0 (give or
+   * take the 1e-5 contact skin) rather than going negative. Check `contacts.rim` to distinguish a
+   * clean 0 from a near miss that rounds to 0.
+   *
+   * The ceiling is geometric: a ball falling exactly through the centre of the hoop clears each
+   * tube by (R_RIM + r_tube) - R_BALL - r_tube = 0.1089 m. So for a made shot this number runs from
+   * 0 (rattled in) to ~10.9 cm (dead centre), which makes it a direct measure of how good the make
+   * was.
+   */
+  readonly rimClearance: Metres;
+  /** Per-tube breakdown of the above. */
   readonly frontRimClearance: Metres;
+  readonly backRimClearance: Metres;
   /** Closest the ball's centre came to the hoop centre (m). */
   readonly closestApproach: Metres;
   readonly contacts: Readonly<Record<'floor' | 'board' | 'rim' | 'obstacle', number>>;
@@ -92,6 +107,7 @@ export class ShotTracker {
   private closest = Infinity;
   private closestX = 0;
   private frontClearance = Infinity;
+  private backClearance = Infinity;
 
   private readonly counts = { floor: 0, board: 0, rim: 0, obstacle: 0 };
   private total = 0;
@@ -102,19 +118,37 @@ export class ShotTracker {
   private scoreT: Seconds | null = null;
 
   /**
-   * Everything the classification depends on, frozen at the instant the outcome became certain.
+   * Contacts made on the way IN, snapshotted at the scoring instant.
    *
-   * This is what keeps an early-aborted sweep run and a full interactive run in agreement. Both
-   * keep simulating differently AFTER the outcome is settled — the interactive one watches the ball
-   * drop through the net and clatter around, the sweep stops dead — and any contact or approach
-   * recorded in that tail would otherwise change the verdict. The early-abort agreement test caught
-   * exactly this: a shot that went in cleanly off the board, then rattled the rim on its way down,
-   * was reported as 'bank' by one run and 'rattle' by the other.
-   *
-   * Live stats (apex, closest approach, contact counts) keep updating for the log and the HUD; only
-   * the classification reads from this snapshot.
+   * The outcome describes how the ball went in, so a shot that drops cleanly through and then
+   * rattles the rim on its way down is a swish, not a rattle. The early-abort agreement test caught
+   * exactly this: one run said 'bank', the other said 'rattle'.
    */
-  private decidedAt: { rim: number; board: number; closest: number; closestX: number } | null = null;
+  private scoreSnapshot: { rim: number; board: number } | null = null;
+
+  /**
+   * Every reported statistic, frozen once the ball can no longer reach rim height (see
+   * `cannotReachRim`). After that point nothing it does is part of the shot — it is just a ball
+   * bouncing around the court.
+   *
+   * Freezing matters because an interactive run and a swept run diverge AFTER this moment: the
+   * interactive one keeps simulating until the ball rests or leaves the court, the swept one stops.
+   * With the freeze, both report byte-identical statistics, which is what makes the clearance
+   * column in the outcome table mean the same thing as the clearance in the HUD.
+   *
+   * Note this is deliberately NOT the scoring instant. The minimum rim clearance occurs about a
+   * centimetre BELOW rim level (the tube centres sit at rimY - r_tube), so freezing at the plane
+   * crossing would cut the measurement off just before its true minimum.
+   */
+  private frozen: {
+    rim: number;
+    board: number;
+    closest: number;
+    closestX: number;
+    apex: number;
+    front: number;
+    back: number;
+  } | null = null;
   private entryAngle: number | null = null;
   private entrySpeedValue: number | null = null;
 
@@ -129,24 +163,37 @@ export class ShotTracker {
   /** Call once with the release state, before any stepping. */
   begin(ball: BallState): void {
     this.apex = ball.p.y;
-    this.sample(ball);
+    this.sample(ball.p, ball.p);
   }
 
-  private sample(ball: BallState): void {
-    const p = ball.p;
-    if (p.y > this.apex) this.apex = p.y;
+  /**
+   * Fold one step of travel into the statistics.
+   *
+   * Distances are measured against the swept segment `prev -> cur`, not against its endpoints, so
+   * the numbers do not depend on the step size. That matters most for rim clearance: the whole
+   * quantity is a few centimetres, and endpoint sampling at 4 m/s would miss the true minimum by
+   * up to 1.7 cm — a third of the number being reported.
+   */
+  private sample(prev: Vec2, cur: Vec2): void {
+    if (this.frozen !== null) return;
 
-    const d = dist(p, this.hoopCentre);
+    if (cur.y > this.apex) this.apex = cur.y;
+
+    const d = distPointSegment(this.hoopCentre, prev, cur);
     if (d < this.closest) {
       this.closest = d;
-      this.closestX = p.x;
+      // Record where along the path the closest approach happened, for short-vs-long.
+      this.closestX = cur.x;
     }
 
-    const clearance = dist(p, this.goal.frontRim) - R_BALL - RIM_TUBE_R;
-    if (clearance < this.frontClearance) this.frontClearance = clearance;
+    const front = distPointSegment(this.goal.frontRim, prev, cur) - R_BALL - RIM_TUBE_R;
+    if (front < this.frontClearance) this.frontClearance = front;
 
-    const inGate = p.x > this.goal.leftEdge && p.x < this.goal.rightEdge;
-    if (inGate && Math.abs(p.y - this.goal.rimY) <= HOOP_REGION_HALF_HEIGHT) {
+    const back = distPointSegment(this.goal.backRim, prev, cur) - R_BALL - RIM_TUBE_R;
+    if (back < this.backClearance) this.backClearance = back;
+
+    const inGate = cur.x > this.goal.leftEdge && cur.x < this.goal.rightEdge;
+    if (inGate && Math.abs(cur.y - this.goal.rimY) <= HOOP_REGION_HALF_HEIGHT) {
       this.enteredRegion = true;
     }
   }
@@ -156,7 +203,7 @@ export class ShotTracker {
    * is at the end of it. Returns true on the step where the shot scores.
    */
   update(prev: Vec2, ball: BallState, t: Seconds): boolean {
-    this.sample(ball);
+    this.sample(prev, ball.p);
 
     const cur = ball.p;
     const plane = this.goal.rimY;
@@ -170,7 +217,7 @@ export class ShotTracker {
         this.scored = true;
         this.scoreT = t;
         // Contacts in this same step happened on the way in, so they belong to the snapshot.
-        this.freeze();
+        this.scoreSnapshot = { rim: this.counts.rim, board: this.counts.board };
         this.entrySpeedValue = len(ball.v);
         // Angle above horizontal, so a steep drop reads near 90 and a flat one near 0.
         this.entryAngle = Math.atan2(Math.abs(ball.v.y), Math.abs(ball.v.x)) * RAD_TO_DEG;
@@ -184,19 +231,22 @@ export class ShotTracker {
       if (this.enteredRegion && this.counts.rim > 0) this.rimContactBeforeExit = true;
     }
 
-    // The decision test runs on EVERY step, in every mode, so the snapshot is taken at the same
+    // The freeze test runs on EVERY step, in every mode, so the snapshot is taken at the same
     // moment whether or not the caller intends to stop there.
-    if (this.decidedAt === null && this.cannotReachRim(ball)) this.freeze();
+    if (this.frozen === null && this.cannotReachRim(ball)) this.freeze();
 
     return false;
   }
 
   private freeze(): void {
-    this.decidedAt = {
+    this.frozen = {
       rim: this.counts.rim,
       board: this.counts.board,
       closest: this.closest,
       closestX: this.closestX,
+      apex: this.apex,
+      front: this.frontClearance,
+      back: this.backClearance,
     };
   }
 
@@ -225,6 +275,18 @@ export class ShotTracker {
    * toward the outcome classification.
    */
   noteContact(collider: Collider, t: Seconds, resting: boolean): void {
+    // A rim touch is zero clearance by definition, and saying so explicitly is not redundant: the
+    // sampled measurement in `sample()` walks the straight chord from one step to the next, but a
+    // collision BENDS the real path mid-step, so the chord passes farther from the tube than the
+    // ball actually did. Without this, a shot that demonstrably hit the iron could report 3.7 mm of
+    // clearance — the table and the contact count would contradict each other.
+    //
+    // This runs before the resting check so that a ball which settles on the rim still clamps.
+    if (this.frozen === null) {
+      if (collider.id === COLLIDER_IDS.rimFront) this.frontClearance = Math.min(this.frontClearance, 0);
+      else if (collider.id === COLLIDER_IDS.rimBack) this.backClearance = Math.min(this.backClearance, 0);
+    }
+
     if (resting) {
       this.resting++;
       return;
@@ -244,20 +306,41 @@ export class ShotTracker {
    * (DESIGN.md §12 performance item 1). Set by `update`, so it reflects the last completed step.
    */
   outcomeDecided(): boolean {
-    return this.decidedAt !== null;
+    return this.frozen !== null;
+  }
+
+  /**
+   * Statistics as frozen (see `frozen`), falling back to live values for a shot that resolved
+   * before the freeze could fire — e.g. one that flew straight out of bounds.
+   */
+  private stats() {
+    return (
+      this.frozen ?? {
+        rim: this.counts.rim,
+        board: this.counts.board,
+        closest: this.closest,
+        closestX: this.closestX,
+        apex: this.apex,
+        front: this.frontClearance,
+        back: this.backClearance,
+      }
+    );
   }
 
   finish(ball: BallState, t: Seconds, endedAtRest: boolean): ShotSummary {
+    const s = this.stats();
     return {
       outcome: this.classify(ball, endedAtRest),
       scored: this.scored,
       flightTime: this.scoreT ?? t,
       timeToFirstContact: this.firstContactT,
-      apexY: this.apex,
+      apexY: s.apex,
       entryAngleDeg: this.entryAngle,
       entrySpeed: this.entrySpeedValue,
-      frontRimClearance: this.frontClearance,
-      closestApproach: this.closest,
+      rimClearance: Math.min(s.front, s.back),
+      frontRimClearance: s.front,
+      backRimClearance: s.back,
+      closestApproach: s.closest,
       contacts: { ...this.counts },
       totalContacts: this.total,
       restingContacts: this.resting,
@@ -267,16 +350,14 @@ export class ShotTracker {
   }
 
   private classify(ball: BallState, endedAtRest: boolean): Outcome {
-    // Frozen at the decision point; the live values are only a fallback for a shot that somehow
-    // resolved before either condition fired (e.g. straight out of bounds).
-    const at =
-      this.decidedAt ??
-      { rim: this.counts.rim, board: this.counts.board, closest: this.closest, closestX: this.closestX };
+    const at = this.stats();
 
     if (this.scored) {
+      // Only contacts made on the way in count — see scoreSnapshot.
+      const inbound = this.scoreSnapshot ?? { rim: at.rim, board: at.board };
       // Rim takes precedence over board: if it touched iron, "rattle" is the honest description.
-      if (at.rim > 0) return 'rattle';
-      if (at.board > 0) return 'bank';
+      if (inbound.rim > 0) return 'rattle';
+      if (inbound.board > 0) return 'bank';
       return 'swish';
     }
 

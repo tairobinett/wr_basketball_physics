@@ -1,0 +1,344 @@
+/**
+ * The outcome table panel (DESIGN.md §12).
+ *
+ * Two axes — power down the side, release angle across the top — and two numbers per cell: the
+ * binary 1/0 make, and the rim clearance in centimetres.
+ *
+ * Clearance is the distance from the ball's surface to the nearest rim tube at its closest
+ * approach. It tops out at 10.9 cm (dead centre through the hoop) and reads 0 when the ball
+ * actually struck the iron, which the cell marks explicitly so a 0 is never ambiguous.
+ */
+
+import { MAX_SPEED } from '../core/constants.js';
+import type { PhysicsFlags } from '../core/forces.js';
+import type { MaterialOverrides } from '../core/materials.js';
+import { OUTCOME_LABELS } from '../core/scoring.js';
+import type { World } from '../core/world.js';
+import { isCancellation, runSweep } from '../sweep/client.js';
+import type { SweepCell, SweepSpec, SweepTable } from '../sweep/grid.js';
+import { cellCount, tableToJSON, tableToLongCSV, tableToMatrixCSV } from '../sweep/grid.js';
+import { createButton, createSlider, createToggle } from './controls.js';
+
+/** Above this, generating gets slow enough to warn about rather than silently churn. */
+const BIG_TABLE = 6000;
+
+export interface TablePanelDeps {
+  /** Current world, for the no-Worker fallback and for material overrides. */
+  getWorld(): World;
+  getShooterX(): number;
+  getReleaseY(): number;
+  getFlags(): PhysicsFlags;
+  getOverrides(): MaterialOverrides | undefined;
+  /** Clicking a cell loads that shot into the controls and fires it. */
+  onPickShot(angleDeg: number, speed: number): void;
+}
+
+export interface TablePanelHandle {
+  readonly el: HTMLElement;
+}
+
+function download(name: string, text: string, mime: string): void {
+  const blob = new Blob([text], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+/** Green for makes, scaled by how much room the ball had; red for misses. */
+function cellStyle(c: SweepCell): string {
+  if (c.made === 1) {
+    // 0 cm (rattled in) -> dim, 10.9 cm (dead centre) -> bright.
+    const f = Math.max(0, Math.min(1, c.clearance / 0.109));
+    const alpha = (0.18 + 0.5 * f).toFixed(3);
+    return `background: rgba(70, 193, 126, ${alpha});`;
+  }
+  // Misses: the closer they came to the iron, the more interesting.
+  const f = Math.max(0, Math.min(1, 1 - c.clearance / 0.25));
+  const alpha = (0.06 + 0.3 * f).toFixed(3);
+  return `background: rgba(217, 83, 79, ${alpha});`;
+}
+
+function cellTitle(c: SweepCell, angle: number, speed: number): string {
+  const lines = [
+    `angle ${angle.toFixed(2)}°, speed ${speed.toFixed(3)} m/s (${((speed / MAX_SPEED) * 100).toFixed(1)}% power)`,
+    `${OUTCOME_LABELS[c.outcome]} — made = ${c.made}`,
+    c.rimContacts > 0
+      ? `hit the rim (${c.rimContacts} contact${c.rimContacts === 1 ? '' : 's'}), clearance 0`
+      : `rim clearance ${(c.clearance * 100).toFixed(2)} cm (front ${(c.frontClearance * 100).toFixed(2)}, back ${(c.backClearance * 100).toFixed(2)})`,
+  ];
+  if (c.entryAngleDeg !== null) lines.push(`entry angle ${c.entryAngleDeg.toFixed(1)}°`);
+  lines.push('click to fire this shot');
+  return lines.join('\n');
+}
+
+export function createTablePanel(deps: TablePanelDeps): TablePanelHandle {
+  const el = document.createElement('div');
+  el.className = 'tablepanel';
+
+  // --- Spec controls --------------------------------------------------------------------------
+
+  const spec = {
+    angleMin: 40,
+    angleMax: 65,
+    angleStep: 2.5,
+    speedMin: 6.8,
+    speedMax: 8.0,
+    // 0.02 m/s shifts the ball's arrival point by ~3 cm. Coarser than that and nearly every cell
+    // in the interesting band is a rim strike, which hides the gradient the table exists to show.
+    speedStep: 0.02,
+  };
+
+  const bar = document.createElement('div');
+  bar.className = 'tablebar';
+
+  const mk = (
+    id: string,
+    label: string,
+    min: number,
+    max: number,
+    step: number,
+    value: number,
+    unit: string,
+    places: number,
+    set: (v: number) => void,
+  ): HTMLElement => {
+    const h = createSlider({ id, label, min, max, step, value, unit, places }, (v) => {
+      set(v);
+      updateCount();
+    });
+    h.el.classList.add('compact');
+    return h.el;
+  };
+
+  const angleGroup = document.createElement('div');
+  angleGroup.className = 'spec-group';
+  angleGroup.append(
+    mk('t-amin', 'Angle from', 0, 89, 0.5, spec.angleMin, '°', 1, (v) => (spec.angleMin = v)),
+    mk('t-amax', 'Angle to', 0, 89, 0.5, spec.angleMax, '°', 1, (v) => (spec.angleMax = v)),
+    mk('t-astep', 'Angle step', 0.25, 10, 0.25, spec.angleStep, '°', 2, (v) => (spec.angleStep = v)),
+  );
+
+  const speedGroup = document.createElement('div');
+  speedGroup.className = 'spec-group';
+  speedGroup.append(
+    mk('t-smin', 'Speed from', 0, MAX_SPEED, 0.05, spec.speedMin, 'm/s', 2, (v) => (spec.speedMin = v)),
+    mk('t-smax', 'Speed to', 0, MAX_SPEED, 0.05, spec.speedMax, 'm/s', 2, (v) => (spec.speedMax = v)),
+    mk('t-sstep', 'Speed step', 0.005, 1, 0.005, spec.speedStep, 'm/s', 3, (v) => (spec.speedStep = v)),
+  );
+
+  const actions = document.createElement('div');
+  actions.className = 'spec-group';
+
+  const countNote = document.createElement('div');
+  countNote.className = 'control-hint';
+
+  const genBtn = createButton('Generate table', () => void generate(), 'primary');
+  const cancelBtn = createButton('Cancel', () => {
+    current?.cancel();
+  });
+  cancelBtn.disabled = true;
+
+  const showClearance = createToggle('Show clearance', true, (v) => {
+    withClearance = v;
+    if (table !== null) renderTable(table);
+  });
+
+  actions.append(countNote, genBtn, cancelBtn, showClearance.el);
+  bar.append(angleGroup, speedGroup, actions);
+
+  const exportBar = document.createElement('div');
+  exportBar.className = 'tablebar exports';
+  const expLong = createButton('CSV (one row per cell)', () => {
+    if (table !== null) download('outcome-table-long.csv', tableToLongCSV(table), 'text/csv');
+  });
+  const expMade = createButton('CSV (make matrix)', () => {
+    if (table !== null) download('outcome-made-matrix.csv', tableToMatrixCSV(table, 'made'), 'text/csv');
+  });
+  const expClear = createButton('CSV (clearance matrix)', () => {
+    if (table !== null)
+      download('outcome-clearance-matrix.csv', tableToMatrixCSV(table, 'clearance'), 'text/csv');
+  });
+  const expJson = createButton('JSON', () => {
+    if (table !== null) download('outcome-table.json', tableToJSON(table), 'application/json');
+  });
+  const summaryNote = document.createElement('div');
+  summaryNote.className = 'control-hint';
+  exportBar.append(expLong, expMade, expClear, expJson, summaryNote);
+
+  const scroller = document.createElement('div');
+  scroller.className = 'tablescroll';
+  const placeholder = document.createElement('p');
+  placeholder.className = 'control-hint';
+  placeholder.textContent =
+    'Generate a table to sweep power against release angle. Each cell is a full simulation: 1 = basket, 0 = miss, with the clearance to the nearest rim tube in centimetres.';
+  scroller.append(placeholder);
+
+  el.append(bar, exportBar, scroller);
+
+  let table: SweepTable | null = null;
+  let withClearance = true;
+  let current: { cancel(): void } | null = null;
+
+  function currentSpec(): SweepSpec {
+    const base = {
+      angleMin: Math.min(spec.angleMin, spec.angleMax),
+      angleMax: Math.max(spec.angleMin, spec.angleMax),
+      angleStep: spec.angleStep,
+      speedMin: Math.min(spec.speedMin, spec.speedMax),
+      speedMax: Math.max(spec.speedMin, spec.speedMax),
+      speedStep: spec.speedStep,
+      shooterX: deps.getShooterX(),
+      releaseY: deps.getReleaseY(),
+      flags: deps.getFlags(),
+      levelId: 'regulation',
+    };
+    const o = deps.getOverrides();
+    return o ? { ...base, materialOverrides: o } : base;
+  }
+
+  function updateCount(): void {
+    let n: number;
+    try {
+      n = cellCount(currentSpec());
+    } catch {
+      countNote.textContent = 'invalid range';
+      return;
+    }
+    countNote.textContent =
+      `${n.toLocaleString()} cells` + (n > BIG_TABLE ? ' — large, may take a few seconds' : '');
+  }
+
+  async function generate(): Promise<void> {
+    const s = currentSpec();
+    genBtn.disabled = true;
+    cancelBtn.disabled = false;
+    scroller.replaceChildren(progressNode(0, cellCount(s)));
+
+    const o = deps.getOverrides();
+    const handle = runSweep(s, {
+      world: deps.getWorld(),
+      ...(o !== undefined ? { materialOverrides: o } : {}),
+      onProgress: (done, total) => {
+        scroller.replaceChildren(progressNode(done, total));
+      },
+    });
+    current = handle;
+
+    try {
+      const result = await handle.promise;
+      table = result;
+      renderTable(result);
+    } catch (err) {
+      if (isCancellation(err)) {
+        scroller.replaceChildren(placeholder);
+      } else {
+        const p = document.createElement('p');
+        p.className = 'control-hint';
+        p.textContent = `Sweep failed: ${err instanceof Error ? err.message : String(err)}`;
+        scroller.replaceChildren(p);
+      }
+    } finally {
+      current = null;
+      genBtn.disabled = false;
+      cancelBtn.disabled = true;
+    }
+  }
+
+  function progressNode(done: number, total: number): HTMLElement {
+    const wrap = document.createElement('div');
+    wrap.className = 'tableprogress';
+    const pct = total === 0 ? 0 : Math.round((done / total) * 100);
+    wrap.textContent = `Simulating… ${done.toLocaleString()} / ${total.toLocaleString()} shots (${pct}%)`;
+    return wrap;
+  }
+
+  function renderTable(t: SweepTable): void {
+    const tbl = document.createElement('table');
+    tbl.className = 'outcome-table';
+
+    const thead = document.createElement('thead');
+    const hr = document.createElement('tr');
+    const corner = document.createElement('th');
+    corner.className = 'corner';
+    corner.innerHTML = 'power&nbsp;↓<br>angle&nbsp;→';
+    hr.append(corner);
+    for (const a of t.angles) {
+      const th = document.createElement('th');
+      th.textContent = `${a.toFixed(a % 1 === 0 ? 0 : 1)}°`;
+      hr.append(th);
+    }
+    thead.append(hr);
+
+    const tbody = document.createElement('tbody');
+    t.speeds.forEach((speed, si) => {
+      const row = t.cells[si];
+      if (row === undefined) return;
+      const tr = document.createElement('tr');
+      const th = document.createElement('th');
+      th.className = 'rowhead';
+      th.innerHTML = `${speed.toFixed(2)}<small> m/s · ${((speed / MAX_SPEED) * 100).toFixed(0)}%</small>`;
+      tr.append(th);
+
+      t.angles.forEach((angle, ai) => {
+        const c = row[ai];
+        const td = document.createElement('td');
+        if (c === undefined) {
+          tr.append(td);
+          return;
+        }
+        td.setAttribute('style', cellStyle(c));
+        td.title = cellTitle(c, angle, speed);
+        td.className = c.made === 1 ? 'made' : 'missed';
+
+        const made = document.createElement('b');
+        made.textContent = String(c.made);
+        td.append(made);
+
+        if (withClearance) {
+          const clear = document.createElement('span');
+          clear.className = 'clearance';
+          // A rim contact is shown as "hit" rather than 0.00, so the zero is never ambiguous.
+          clear.textContent = c.rimContacts > 0 ? 'hit' : (c.clearance * 100).toFixed(1);
+          td.append(clear);
+        }
+
+        td.addEventListener('click', () => deps.onPickShot(angle, speed));
+        tr.append(td);
+      });
+      tbody.append(tr);
+    });
+
+    tbl.append(thead, tbody);
+    scroller.replaceChildren(tbl);
+
+    const total = t.angles.length * t.speeds.length;
+    const pct = total === 0 ? 0 : (t.madeCount / total) * 100;
+    const best = bestCell(t);
+    summaryNote.textContent =
+      `${t.madeCount} / ${total} made (${pct.toFixed(1)}%)` +
+      (best === null
+        ? ''
+        : ` · widest margin: ${(best.cell.clearance * 100).toFixed(1)} cm at ${best.angle.toFixed(1)}°, ${best.speed.toFixed(3)} m/s`);
+  }
+
+  /** The made shot with the most room to spare — the centre of the sweet spot. */
+  function bestCell(t: SweepTable): { cell: SweepCell; angle: number; speed: number } | null {
+    let best: { cell: SweepCell; angle: number; speed: number } | null = null;
+    t.speeds.forEach((speed, si) => {
+      const row = t.cells[si];
+      if (row === undefined) return;
+      t.angles.forEach((angle, ai) => {
+        const c = row[ai];
+        if (c === undefined || c.made !== 1) return;
+        if (best === null || c.clearance > best.cell.clearance) best = { cell: c, angle, speed };
+      });
+    });
+    return best;
+  }
+
+  updateCount();
+  return { el };
+}
