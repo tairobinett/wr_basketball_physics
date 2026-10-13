@@ -533,10 +533,14 @@ table.outcome-table td {
   border-radius: 2px;
   cursor: pointer;
   line-height: 1.2;
+  /* White text across all five categories; the shadow carries it over bright magenta, which is
+     the one background close to the contrast line. */
+  color: #fff;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.85);
 }
 
 table.outcome-table td:hover {
-  outline: 1px solid var(--text);
+  outline: 1px solid #fff;
 }
 
 table.outcome-table td b {
@@ -544,18 +548,36 @@ table.outcome-table td b {
   font-size: 11px;
 }
 
-table.outcome-table td.made b {
-  color: #d6ffe8;
-}
-
-table.outcome-table td.missed b {
-  color: #ffd9d8;
-}
-
 table.outcome-table td .clearance {
   display: block;
   font-size: 9px;
-  color: rgba(255, 255, 255, 0.62);
+  opacity: 0.85;
+}
+
+/* --- Legend --------------------------------------------------------------------------------- */
+
+.tablelegend {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  align-items: center;
+  padding: 0 12px 8px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.legend-swatch {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 2px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
 }
 
 @media (max-width: 900px) {

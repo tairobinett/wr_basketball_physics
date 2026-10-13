@@ -116,13 +116,19 @@ export const MAGNUS_COEFF = 0.25;
 export const DEFAULT_RELEASE_Y = 2.1;
 export const DEFAULT_ANGLE_DEG = 52;
 /**
- * Mid-point of the contiguous make window at 52 deg from 2.1 m, which the sim puts at
- * 7.160-7.300 m/s. So the app's first shot is a swish rather than a back-rim clang.
+ * The cleanest make at 52 deg from 2.1 m: the speed whose trajectory passes furthest from the iron
+ * (2.1 cm) while still going in, so the app's first shot is a true swish rather than a shot that
+ * kisses the rim on its way through.
+ *
+ * Clean makes are scarce from the free-throw line — at 52 deg only about 40 of 600 sampled speeds
+ * between 6.8 and 8.0 m/s avoid the rim entirely — because the ball arrives at a ~40 deg entry
+ * angle and threads the hoop diagonally. Picking the maximum-clearance one makes the default robust
+ * rather than knife-edge.
  *
  * This is also the geometry's reality check: published human free-throw release speeds are
- * ~7.0-7.5 m/s at 50-55 deg, and the sim's window sits inside that with no tuning at all.
+ * ~7.0-7.5 m/s at 50-55 deg, and the sim's make window sits inside that with no tuning at all.
  */
-export const DEFAULT_SPEED = 7.23;
+export const DEFAULT_SPEED = 7.184;
 export const MAX_SPEED = 15;
 
 export const SHOOTER_X_MIN = 0.5;

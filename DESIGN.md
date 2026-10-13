@@ -1,6 +1,6 @@
 # Free Throw Simulator — Design Doc
 
-Status: **M0–M7 implemented** (74 tests passing) · Date: 2026-10-12 ·
+Status: **M0–M7 implemented** (95 tests passing) · Date: 2026-10-13 ·
 Repo: `wr_basketball_physics`
 
 Where the build corrected this document, the document has been corrected rather than quietly
@@ -118,8 +118,12 @@ Reality anchor: a typical human free throw releases at ≈7.0–7.5 m/s, ≈50�
 ≈2–3 rev/s of backspin. If the defaults don't score near those values, the geometry is wrong.
 
 **Result:** the built sim puts the make window at 52° from 2.1 m at **7.160–7.300 m/s**, inside the
-published human range with no tuning whatsoever. The default shot is the midpoint, 7.23 m/s. That
-agreement is the strongest evidence the geometry table is right.
+published human range with no tuning whatsoever. That agreement is the strongest evidence the
+geometry table is right.
+
+The default shot is **7.184 m/s**, the maximum-clearance *clean* make at that angle (2.1 cm from the
+iron), so the first shot fired is a true swish rather than one that kisses the rim on its way
+through. Clean makes are scarce from the line — see §12.
 
 ---
 
@@ -379,6 +383,16 @@ shot that dropped in cleanly off the board and *then* rattled the rim on its way
 as `bank` by one run and `rattle` by the other. The outcome describes how the ball went in, so only
 contacts made on the way in count.
 
+**What counts as "on the way in" is the ball being at the hoop, not the plane crossing.** The
+snapshot closes once the ball has fallen clear of the rim — far enough below the tube centres that
+no further rim contact is geometrically possible. Closing it at the scoring plane instead was wrong:
+a ball can cross the plane and *then* clip the back of the rim from inside on its way down, a
+contact that lands a step or two later. That recorded the default free throw as a clean swish with a
+rim contact attached to it — self-contradictory, and invisible until cells were coloured by whether
+the rim was touched, at which point a ball that audibly clanks the iron would have been painted as a
+clean make. Several shots in the golden set reclassified from `swish` to `rattle` when this was
+fixed, which is correct.
+
 "Certain" has a rigorous test rather than a heuristic one: the ball can never reach rim height again
 once `y + R + |v|²/2g < rimY`, because `|v|²/2g` is the highest it could rise if *all* of its
 kinetic energy became height, which no bounce or drag can exceed. Requiring it to also be more than
@@ -579,6 +593,47 @@ the option is to measure against the collision-free trajectory instead, giving a
 (negative = how deep into the tube the undisturbed arc would have passed). That is a different
 quantity and a second simulation per cell; not built, and noted here as an open choice.
 
+### Colour coding
+
+To the client's specification. The five categories are a total partition of every possible cell:
+
+| Colour | Cell |
+|---|---|
+| **black** | missed without touching the rim (the airball, and any other no-contact miss) |
+| **gray** | hit the rim but did not score |
+| **blue** | hit the rim and scored after bouncing **up** off it |
+| **orange** | hit the rim and scored, deflected **down** off it |
+| **red → magenta** | scored without touching the rim, interpolated by clearance |
+
+The categories live in `sweep/grid.ts` (a fact about the shot), the colours in `ui/colors.ts` (a
+presentation choice), and the long CSV carries the category so a spreadsheet can reproduce the
+shading.
+
+Four points where the spec needed a decision:
+
+- **"Hit the rim" means hit it at the hoop**, i.e. `rimContactsInbound`, not any contact in the
+  flight. A ball that bounces off the floor and back up into the iron has not changed how the shot
+  went in. This forced the §6 fix below.
+- **Blue vs. orange is the direction off the *last* rim contact at the hoop**, since that is the
+  contact that sent the ball in. It is read from the ball's vertical velocity immediately after the
+  impulse, which the tracker now receives from the collision result.
+- **Misses that never touched the rim but are not strictly airballs** — a brick off the backboard,
+  or a near miss that passed close without contact — are not covered by the spec's wording. They
+  take black, so black reads as "missed, never touched the rim". Easy to split out if wanted.
+- **The ramp is normalised to the table's own largest clean-make clearance**, not to the 10.89 cm
+  geometric ceiling, and the legend prints the cm range. The ceiling assumes a ball dropping
+  vertically through the hoop; a free throw arrives at roughly a 40° entry angle and threads it
+  diagonally, so real clean makes from the line top out near **2 cm at 52°** and **4 cm at 56°** —
+  under a fifth of the ceiling. Scaled to the ceiling, every realistic table would be shades of red
+  with magenta never reached and the gradient carrying almost no information. Normalising spends the
+  whole ramp on the range present. The trade is that colours are comparable within a table but not
+  between tables, which is why the numbers are printed in the cells and the range in the legend.
+
+Clean makes are scarcer than they look, for the same entry-angle reason: at 52° only about 40 of
+600 sampled speeds between 6.8 and 8.0 m/s avoid the iron entirely. Most makes from the free-throw
+line touch the rim, so blue and orange dominate the made region and red/magenta marks the genuinely
+clean ones.
+
 ### Heatmap view
 
 Still worth having eventually, and cheap now that the sweep exists: angle on the x-axis, power on
@@ -658,6 +713,9 @@ trust from an earlier read:
 | `server.watch` | default | `usePolling: true` | Windows Vite cannot `fs.watch` the repo over `\\wsl.localhost` — it dies with EISDIR. See README. |
 | Rim clearance | front rim only, sampled at step endpoints, frozen at the scoring instant | nearest of both tubes, measured against the swept path, frozen after the ball passes the rim, clamped to 0 on contact | Promoting clearance to a reported client-facing number exposed three separate ways the old stat was wrong — each worth a few millimetres to centimetres on a quantity that tops out at 10.9 cm (§12). |
 | M7 output | heatmap | table of 1/0 + clearance, with a heatmap as an optional follow-up | Client asked for a table. |
+| "On the way in" window | closed at the scoring plane | closes when the ball falls clear of the rim | A ball can cross the plane and then clip the back of the rim from inside. The old window called that a clean swish with a rim contact attached (§6). |
+| Default release speed | 7.23 m/s | **7.184 m/s** | 7.23 is a make but kisses the rim; 7.184 is the maximum-clearance clean make at 52°, so the first shot fired is a true swish (§3). |
+| Clearance ramp scale | 10.89 cm geometric ceiling | the table's own largest clean-make clearance | A free throw enters at ~40°, so real clean makes reach only ~2 cm. Against the ceiling the gradient would never leave the reds (§12). |
 
 On (7): the work is directed by one person, which sets two priorities. **Changeability over
 polish** — expect revisions to defaults, geometry, and feel, so constants live in one table (§3),

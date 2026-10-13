@@ -165,7 +165,7 @@ export class Simulation {
     this.prevP = this.ball.p;
 
     stepBall(this.ball, this.world, this.descriptor?.flags ?? NO_AIR, DT, (hit, res) => {
-      this.tracker.noteContact(hit.collider, this.t, res.restitutionFloored);
+      this.tracker.noteContact(hit.collider, this.t, res.restitutionFloored, res.vOut.y);
       // Sustained contact (a ball rolling or sitting on the floor) re-triggers every step. Those
       // are deliberately not logged: one shot in the golden set produced 453 of them, which is
       // exactly the log flood the restitution floor exists to prevent. The summary reports the

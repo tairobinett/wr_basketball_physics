@@ -15,8 +15,15 @@ import type { MaterialOverrides } from '../core/materials.js';
 import { OUTCOME_LABELS } from '../core/scoring.js';
 import type { World } from '../core/world.js';
 import { isCancellation, runSweep } from '../sweep/client.js';
-import type { SweepCell, SweepSpec, SweepTable } from '../sweep/grid.js';
-import { cellCount, tableToJSON, tableToLongCSV, tableToMatrixCSV } from '../sweep/grid.js';
+import type { CellCategory, SweepCell, SweepSpec, SweepTable } from '../sweep/grid.js';
+import {
+  categorize,
+  cellCount,
+  tableToJSON,
+  tableToLongCSV,
+  tableToMatrixCSV,
+} from '../sweep/grid.js';
+import { cellColor, clearanceScaleFor, legendFor, MAX_CLEARANCE, rampGradientCSS } from './colors.js';
 import { createButton, createSlider, createToggle } from './controls.js';
 
 /** Above this, generating gets slow enough to warn about rather than silently churn. */
@@ -47,24 +54,19 @@ function download(name: string, text: string, mime: string): void {
   URL.revokeObjectURL(url);
 }
 
-/** Green for makes, scaled by how much room the ball had; red for misses. */
-function cellStyle(c: SweepCell): string {
-  if (c.made === 1) {
-    // 0 cm (rattled in) -> dim, 10.9 cm (dead centre) -> bright.
-    const f = Math.max(0, Math.min(1, c.clearance / 0.109));
-    const alpha = (0.18 + 0.5 * f).toFixed(3);
-    return `background: rgba(70, 193, 126, ${alpha});`;
-  }
-  // Misses: the closer they came to the iron, the more interesting.
-  const f = Math.max(0, Math.min(1, 1 - c.clearance / 0.25));
-  const alpha = (0.06 + 0.3 * f).toFixed(3);
-  return `background: rgba(217, 83, 79, ${alpha});`;
-}
+const CATEGORY_TEXT: Readonly<Record<CellCategory, string>> = {
+  airball: 'missed without touching the rim',
+  rim_miss: 'hit the rim, did not score',
+  rim_up: 'hit the rim, scored after bouncing up',
+  rim_down: 'hit the rim, scored, deflected down',
+  clean_make: 'scored without touching the rim',
+};
 
 function cellTitle(c: SweepCell, angle: number, speed: number): string {
   const lines = [
     `angle ${angle.toFixed(2)}°, speed ${speed.toFixed(3)} m/s (${((speed / MAX_SPEED) * 100).toFixed(1)}% power)`,
     `${OUTCOME_LABELS[c.outcome]} — made = ${c.made}`,
+    CATEGORY_TEXT[categorize(c)],
     c.rimContacts > 0
       ? `hit the rim (${c.rimContacts} contact${c.rimContacts === 1 ? '' : 's'}), clearance 0`
       : `rim clearance ${(c.clearance * 100).toFixed(2)} cm (front ${(c.frontClearance * 100).toFixed(2)}, back ${(c.backClearance * 100).toFixed(2)})`,
@@ -72,6 +74,28 @@ function cellTitle(c: SweepCell, angle: number, speed: number): string {
   if (c.entryAngleDeg !== null) lines.push(`entry angle ${c.entryAngleDeg.toFixed(1)}°`);
   lines.push('click to fire this shot');
   return lines.join('\n');
+}
+
+function buildLegend(clearanceScale: number | null): HTMLElement {
+  const wrap = document.createElement('div');
+  wrap.className = 'tablelegend';
+  for (const entry of legendFor(clearanceScale)) {
+    const item = document.createElement('span');
+    item.className = 'legend-item';
+    const sw = document.createElement('i');
+    sw.className = 'legend-swatch';
+    sw.setAttribute(
+      'style',
+      entry.color === 'ramp'
+        ? `background: ${rampGradientCSS()}; width: 44px;`
+        : `background: ${entry.color};`,
+    );
+    const label = document.createElement('span');
+    label.textContent = entry.label;
+    item.append(sw, label);
+    wrap.append(item);
+  }
+  return wrap;
 }
 
 export function createTablePanel(deps: TablePanelDeps): TablePanelHandle {
@@ -168,6 +192,8 @@ export function createTablePanel(deps: TablePanelDeps): TablePanelHandle {
   summaryNote.className = 'control-hint';
   exportBar.append(expLong, expMade, expClear, expJson, summaryNote);
 
+  let legend = buildLegend(null);
+
   const scroller = document.createElement('div');
   scroller.className = 'tablescroll';
   const placeholder = document.createElement('p');
@@ -176,7 +202,7 @@ export function createTablePanel(deps: TablePanelDeps): TablePanelHandle {
     'Generate a table to sweep power against release angle. Each cell is a full simulation: 1 = basket, 0 = miss, with the clearance to the nearest rim tube in centimetres.';
   scroller.append(placeholder);
 
-  el.append(bar, exportBar, scroller);
+  el.append(bar, legend, exportBar, scroller);
 
   let table: SweepTable | null = null;
   let withClearance = true;
@@ -256,6 +282,15 @@ export function createTablePanel(deps: TablePanelDeps): TablePanelHandle {
   }
 
   function renderTable(t: SweepTable): void {
+    // The ramp is scaled to the clean makes actually in this table — see colors.ts for why the
+    // geometric ceiling would waste most of the gradient.
+    const flat = t.cells.flat();
+    const scale = clearanceScaleFor(flat) ?? MAX_CLEARANCE;
+
+    const freshLegend = buildLegend(clearanceScaleFor(flat));
+    legend.replaceWith(freshLegend);
+    legend = freshLegend;
+
     const tbl = document.createElement('table');
     tbl.className = 'outcome-table';
 
@@ -289,9 +324,9 @@ export function createTablePanel(deps: TablePanelDeps): TablePanelHandle {
           tr.append(td);
           return;
         }
-        td.setAttribute('style', cellStyle(c));
+        td.setAttribute('style', `background: ${cellColor(c, scale)};`);
         td.title = cellTitle(c, angle, speed);
-        td.className = c.made === 1 ? 'made' : 'missed';
+        td.className = `cell ${categorize(c)}`;
 
         const made = document.createElement('b');
         made.textContent = String(c.made);

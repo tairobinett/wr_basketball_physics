@@ -178,7 +178,12 @@ describe('app boots', () => {
   });
 
   it('fires the shot for a table cell that is clicked', () => {
-    const made = [...document.querySelectorAll('table.outcome-table td.made')] as HTMLElement[];
+    // Cells carry their colour category as a class.
+    const made = [
+      ...document.querySelectorAll(
+        'table.outcome-table td.clean_make, table.outcome-table td.rim_up, table.outcome-table td.rim_down',
+      ),
+    ] as HTMLElement[];
     expect(made.length).toBeGreaterThan(0);
     made[0]?.click();
     // The court is now simulating that cell's shot, and the log recorded the release.

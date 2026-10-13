@@ -284,8 +284,10 @@ describe('exports', () => {
     // Every data row carries a binary make and a clearance.
     for (const line of lines.slice(1)) {
       const parts = line.split(',');
+      // speed, power, angle, made, outcome, category, clearance_m, clearance_cm, ...
       expect(['0', '1']).toContain(parts[3]);
-      expect(Number.isFinite(Number(parts[5]))).toBe(true);
+      expect(['airball', 'rim_miss', 'rim_up', 'rim_down', 'clean_make']).toContain(parts[5]);
+      expect(Number.isFinite(Number(parts[6]))).toBe(true);
     }
   });
 

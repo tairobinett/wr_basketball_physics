@@ -16,7 +16,7 @@ decisions log.
 npm install
 npm run dev        # dev server (prints the URL)
 npm run build      # typecheck + production build into dist/
-npm test           # 74 tests
+npm test           # 95 tests
 npm run typecheck  # tsc --noEmit
 ```
 
@@ -65,13 +65,32 @@ numbers per cell:
 
 - **`1` / `0`** — basket or miss. Each cell is a full simulation with an exact verdict; there is no
   sampling or probability anywhere in it.
-- **rim clearance, in centimetres** — how close the ball's surface came to the nearest rim tube.
-  It tops out at **10.9 cm** (`R_RIM - R_BALL`), which is a ball falling dead centre through the
-  hoop, so for a made shot the number says how good the make was. A cell reads **`hit`** when the
-  ball actually struck the iron, which is clearance zero.
+- **rim clearance, in centimetres** — how close the ball's surface came to the nearest rim tube, so
+  for a made shot it says how much room the ball had. A cell reads **`hit`** when the ball actually
+  struck the iron, which is clearance zero. The absolute ceiling is 10.9 cm (`R_RIM - R_BALL`, a
+  ball dropping dead centre through the hoop), but a free throw arrives at ~40° and threads the
+  hoop diagonally, so real clean makes from the line reach only about 2 cm at 52°.
+
+Cells are coloured by category, with a legend under the controls:
+
+| Colour | Cell |
+|---|---|
+| black | missed without touching the rim |
+| gray | hit the rim but didn't score |
+| blue | hit the rim and scored after bouncing **up** |
+| orange | hit the rim and scored, deflected **down** |
+| red → magenta | scored without touching the rim, by clearance (magenta = most room) |
+
+The red→magenta ramp is scaled to the largest clean-make clearance in the table you generated, and
+the legend prints that range in centimetres. It isn't scaled to the 10.9 cm geometric maximum
+because a free throw enters the hoop at about 40° and threads it diagonally, so real clean makes
+from the line only reach ~2 cm at 52° — against the geometric scale the whole table would be shades
+of red. Most makes from the free-throw line do touch the rim, so blue and orange dominate the made
+region and red/magenta marks the genuinely clean ones.
 
 Set the angle and speed ranges and steps, hit Generate, and click any cell to fire that exact shot
-on the court. Exports: long CSV (one row per cell), make-matrix CSV, clearance-matrix CSV, and JSON.
+on the court. Exports: long CSV (one row per cell, including the colour category), make-matrix CSV,
+clearance-matrix CSV, and JSON.
 
 The sweep runs in a Web Worker so the UI stays responsive, at roughly 0.25 ms per simulated shot.
 
@@ -93,7 +112,7 @@ tests/        analytic, collision, determinism, sweep, golden and boot tests
 ```
 
 The dependency rule: `core/` imports from nothing else in the project. That is what lets the same
-code run the interactive sim, the predicted-arc ghost, the test suite, and (next) the sweep workers.
+code run the interactive sim, the predicted-arc ghost, the test suite, and the sweep worker.
 
 ## Status
 

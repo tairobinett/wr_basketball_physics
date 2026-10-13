@@ -47,9 +47,37 @@ export interface SweepCell {
   readonly clearance: number;
   readonly frontClearance: number;
   readonly backClearance: number;
-  /** Non-zero means the clearance of ~0 is a genuine rim strike rather than a rounded near miss. */
+  /**
+   * Rim contacts made at the hoop. Non-zero means a clearance of 0 is a genuine rim strike rather
+   * than a near miss that rounded down. Contacts from the ball bouncing back up off the floor are
+   * excluded — they are not part of how the shot went in.
+   */
   readonly rimContacts: number;
+  /** Which way the ball came off the rim, for the blue/orange split in the table colouring. */
+  readonly rimBounce: 'up' | 'down' | null;
   readonly entryAngleDeg: number | null;
+}
+
+/**
+ * The five mutually exclusive kinds of cell the client's table distinguishes. This is cell
+ * semantics, not styling — `ui/colors.ts` maps these to colours, and the long CSV export carries
+ * the category so a spreadsheet can reproduce the shading.
+ *
+ * The partition is total, which the client's wording is not quite: it does not say where a miss
+ * that never touched the rim but is not strictly an airball belongs (a brick off the backboard, or
+ * a near miss that passed close without contact). Those fall under 'airball', so that category
+ * reads as "missed without touching the rim".
+ */
+export type CellCategory = 'airball' | 'rim_miss' | 'rim_up' | 'rim_down' | 'clean_make';
+
+export function categorize(c: {
+  made: 0 | 1;
+  rimContacts: number;
+  rimBounce: 'up' | 'down' | null;
+}): CellCategory {
+  if (c.made === 0) return c.rimContacts > 0 ? 'rim_miss' : 'airball';
+  if (c.rimContacts > 0) return c.rimBounce === 'up' ? 'rim_up' : 'rim_down';
+  return 'clean_make';
 }
 
 export interface SweepTable {
@@ -142,7 +170,8 @@ export function sweepGrid(
         clearance: s.rimClearance,
         frontClearance: s.frontRimClearance,
         backClearance: s.backRimClearance,
-        rimContacts: s.contacts.rim,
+        rimContacts: s.rimContactsInbound,
+        rimBounce: s.rimBounce,
         entryAngleDeg: s.entryAngleDeg,
       });
 
@@ -162,7 +191,7 @@ export function sweepGrid(
 /** Long format: one row per cell. The shape you want for plotting or further analysis. */
 export function tableToLongCSV(table: SweepTable): string {
   const rows = [
-    'speed_mps,power_pct,angle_deg,made,outcome,clearance_m,clearance_cm,front_clearance_m,back_clearance_m,rim_contacts,entry_angle_deg',
+    'speed_mps,power_pct,angle_deg,made,outcome,category,clearance_m,clearance_cm,front_clearance_m,back_clearance_m,rim_contacts,rim_bounce,entry_angle_deg',
   ];
   const maxSpeed = 15;
   table.speeds.forEach((speed, si) => {
@@ -178,11 +207,14 @@ export function tableToLongCSV(table: SweepTable): string {
           angle.toFixed(3),
           c.made,
           c.outcome,
+          // The colour category, so a spreadsheet can reproduce the table's shading.
+          categorize(c),
           c.clearance.toFixed(5),
           (c.clearance * 100).toFixed(2),
           c.frontClearance.toFixed(5),
           c.backClearance.toFixed(5),
           c.rimContacts,
+          c.rimBounce ?? '',
           c.entryAngleDeg === null ? '' : c.entryAngleDeg.toFixed(3),
         ].join(','),
       );
