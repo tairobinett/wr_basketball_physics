@@ -16,7 +16,7 @@ decisions log.
 npm install
 npm run dev        # dev server (prints the URL)
 npm run build      # typecheck + production build into dist/
-npm test           # 95 tests
+npm test           # 100 tests
 npm run typecheck  # tsc --noEmit
 ```
 
@@ -42,8 +42,12 @@ from:
 
 ## Controls
 
+The controls panel is hidden on load — the court gets the whole window, and a single
+`⚙ Controls` button at the top right opens it.
+
 | Input | Action |
 |---|---|
+| `⚙ Controls` button / `M` | show or hide the controls panel |
 | `Space` | shoot |
 | `R` | reset |
 | `↑` / `↓` | release angle (hold `Shift` for 0.1° steps) |

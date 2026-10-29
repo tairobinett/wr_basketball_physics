@@ -210,8 +210,13 @@ readHash();
 // DOM
 // ---------------------------------------------------------------------------------------------
 
-const app = document.getElementById('app');
-if (app === null) throw new Error('#app missing from index.html');
+function requireElement(id: string): HTMLElement {
+  const el = document.getElementById(id);
+  if (el === null) throw new Error(`#${id} missing from index.html`);
+  return el;
+}
+
+const app = requireElement('app');
 
 const canvasWrap = document.createElement('div');
 canvasWrap.className = 'court-wrap';
@@ -232,6 +237,7 @@ help.innerHTML = `
     <li><b>↑ / ↓</b> — release angle (hold Shift for fine)</li>
     <li><b>← / →</b> — power (hold Shift for fine)</li>
     <li><b>Drag from the shooter</b> — aim by direction, power by distance</li>
+    <li><b>M</b> — show/hide the controls panel</li>
     <li><b>P</b> — pause, <b>.</b> — single step</li>
     <li><b>G</b> — predicted arc, <b>C</b> — collider wireframe</li>
     <li><b>?</b> — this panel</li>
@@ -240,8 +246,53 @@ help.innerHTML = `
 `;
 canvasWrap.append(help);
 
+// --- Controls panel, hidden until asked for ---------------------------------------------------
+//
+// Closed is the default state: the court gets the whole window and a single button is the only
+// chrome over it.
+
 const panel = document.createElement('aside');
-panel.className = 'panel';
+panel.className = 'panel hidden';
+panel.id = 'controls-panel';
+
+const panelHead = document.createElement('div');
+panelHead.className = 'panel-head';
+const panelTitle = document.createElement('h2');
+panelTitle.textContent = 'Controls';
+const panelClose = createButton('✕', () => setControlsOpen(false), 'panel-close');
+panelClose.title = 'Hide controls (M)';
+panelClose.setAttribute('aria-label', 'Hide controls');
+panelHead.append(panelTitle, panelClose);
+panel.append(panelHead);
+
+let controlsOpen = false;
+
+const panelToggle = createButton('⚙ Controls', () => setControlsOpen(!controlsOpen), 'panel-toggle');
+panelToggle.title = 'Show controls (M)';
+panelToggle.setAttribute('aria-controls', 'controls-panel');
+panelToggle.setAttribute('aria-expanded', 'false');
+canvasWrap.append(panelToggle);
+
+function setControlsOpen(open: boolean): void {
+  controlsOpen = open;
+  app.classList.toggle('controls-open', open);
+  panel.classList.toggle('hidden', !open);
+  panelToggle.classList.toggle('on', open);
+  panelToggle.setAttribute('aria-expanded', String(open));
+
+  // The court's width changes with the panel, so the canvas has to re-fit or it keeps drawing at
+  // the old size until the next window resize. The class change applies synchronously and
+  // getBoundingClientRect inside resize() flushes layout, so one call here is enough — which is
+  // also why the panel appears instantly rather than sliding: an animated width would need the
+  // canvas re-fitted on every frame of the transition.
+  //
+  // Guarded because this runs during module initialisation, before the render loop's size state
+  // exists.
+  if (layoutReady) resize();
+}
+
+/** Set once the canvas sizing state is live; see setControlsOpen. */
+let layoutReady = false;
 
 function get2dContext(c: HTMLCanvasElement): CanvasRenderingContext2D {
   const g = c.getContext('2d');
@@ -600,6 +651,10 @@ window.addEventListener('keydown', (e) => {
     case '.':
       sim.step();
       break;
+    case 'm':
+    case 'M':
+      setControlsOpen(!controlsOpen);
+      break;
     case 'g':
     case 'G':
       view.ghost = !view.ghost;
@@ -759,6 +814,7 @@ function draw(): void {
 
 window.addEventListener('resize', resize);
 resize();
+layoutReady = true;
 reset();
 hud.update(sim.ball, 0, 'idle');
 

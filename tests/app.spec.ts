@@ -88,6 +88,58 @@ describe('app boots', () => {
     }
   });
 
+  describe('controls panel visibility', () => {
+    const toggle = (): HTMLButtonElement =>
+      document.querySelector('.panel-toggle') as HTMLButtonElement;
+    const panel = (): HTMLElement => document.querySelector('.panel') as HTMLElement;
+    const appEl = (): HTMLElement => document.getElementById('app') as HTMLElement;
+
+    it('starts closed, with the toggle button as the only chrome', () => {
+      expect(toggle()).not.toBeNull();
+      expect(panel().classList.contains('hidden')).toBe(true);
+      expect(appEl().classList.contains('controls-open')).toBe(false);
+      expect(toggle().getAttribute('aria-expanded')).toBe('false');
+      // The grid must drop the panel column too, or the court is short 320px of dead space.
+      expect(toggle().getAttribute('aria-controls')).toBe('controls-panel');
+      expect(panel().id).toBe('controls-panel');
+    });
+
+    it('opens on the button and closes again', () => {
+      toggle().click();
+      expect(panel().classList.contains('hidden')).toBe(false);
+      expect(appEl().classList.contains('controls-open')).toBe(true);
+      expect(toggle().getAttribute('aria-expanded')).toBe('true');
+      expect(toggle().classList.contains('on')).toBe(true);
+
+      toggle().click();
+      expect(panel().classList.contains('hidden')).toBe(true);
+      expect(appEl().classList.contains('controls-open')).toBe(false);
+      expect(toggle().getAttribute('aria-expanded')).toBe('false');
+    });
+
+    it('closes from the panel’s own close button', () => {
+      toggle().click();
+      expect(panel().classList.contains('hidden')).toBe(false);
+      (document.querySelector('.panel-close') as HTMLButtonElement).click();
+      expect(panel().classList.contains('hidden')).toBe(true);
+      expect(toggle().getAttribute('aria-expanded')).toBe('false');
+    });
+
+    it('toggles with the M key', () => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'm', bubbles: true }));
+      expect(panel().classList.contains('hidden')).toBe(false);
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'M', bubbles: true }));
+      expect(panel().classList.contains('hidden')).toBe(true);
+    });
+
+    it('still builds every control while hidden, so opening is instant', () => {
+      expect(panel().classList.contains('hidden')).toBe(true);
+      for (const id of ['slider-x', 'slider-y', 'slider-angle', 'slider-power']) {
+        expect(document.getElementById(id), id).not.toBeNull();
+      }
+    });
+  });
+
   it('shows the ready verdict before any shot', () => {
     expect(document.querySelector('.verdict')?.textContent).toBe('Ready');
   });

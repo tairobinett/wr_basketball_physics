@@ -1,6 +1,6 @@
 # Free Throw Simulator — Design Doc
 
-Status: **M0–M7 implemented** (95 tests passing) · Date: 2026-10-13 ·
+Status: **M0–M7 implemented** (100 tests passing) · Date: 2026-10-13 ·
 Repo: `wr_basketball_physics`
 
 Where the build corrected this document, the document has been corrected rather than quietly
@@ -404,8 +404,22 @@ asserted over 150 randomised shots in `tests/determinism.spec.ts`.
 
 ## 7. Controls and UI
 
-Layout: canvas fills the window, a right-hand panel holds controls, a bottom drawer holds the log.
-Both panels collapse so the court can go full-screen.
+Layout: the canvas fills the window, a right-hand panel holds the controls, a bottom drawer holds
+the log and the outcome table.
+
+**The controls panel is hidden by default**, with a single `⚙ Controls` button at the top-right of
+the court as the only chrome over it (opposite the HUD, which sits top-left). The button toggles it,
+the panel carries its own `✕`, and `M` does the same from the keyboard. Two details this needs:
+
+- Hiding the panel with `display: none` is not enough on its own. Grid columns are declared on the
+  container, so the 320px track would still reserve its space and leave a dead strip beside the
+  court; the open state is a class on `#app` that adds the column.
+- The canvas re-fits on toggle, because the court's width changes. That is also why the panel
+  appears instantly rather than sliding: an animated width would need the canvas re-fitted on every
+  frame of the transition, for no real gain.
+
+The state is deliberately not persisted — "hidden by default" should mean on every load, not only
+the first one.
 
 **Shot controls** — each a slider plus a numeric field, with its real unit displayed:
 
