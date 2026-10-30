@@ -1,12 +1,19 @@
 /**
- * The outcome table panel (DESIGN.md §12).
+ * The outcome table (DESIGN.md §12).
  *
  * Two axes — power down the side, release angle across the top — and two numbers per cell: the
  * binary 1/0 make, and the rim clearance in centimetres.
  *
+ * Split in two places on screen, which is why this module hands back two elements:
+ *
+ *  - `specEl` — the sweep ranges and the Generate button, which live in the right-hand Controls
+ *    panel alongside every other variable.
+ *  - `overlayEl` — the generated table itself, floating over the court at the bottom right, under
+ *    the basket. `render/camera.ts` owns where exactly, in world coordinates.
+ *
  * Clearance is the distance from the ball's surface to the nearest rim tube at its closest
- * approach. It tops out at 10.9 cm (dead centre through the hoop) and reads 0 when the ball
- * actually struck the iron, which the cell marks explicitly so a 0 is never ambiguous.
+ * approach. A cell reads `hit` when the ball actually struck the iron, which the colouring treats
+ * as clearance zero.
  */
 
 import { MAX_SPEED } from '../core/constants.js';
@@ -38,11 +45,27 @@ export interface TablePanelDeps {
   getOverrides(): MaterialOverrides | undefined;
   /** Clicking a cell loads that shot into the controls and fires it. */
   onPickShot(angleDeg: number, speed: number): void;
+  /** Called whenever the overlay shows or hides, so the toggle button can follow. */
+  onVisibilityChange?(open: boolean): void;
 }
 
 export interface TablePanelHandle {
-  readonly el: HTMLElement;
+  /** Sweep ranges and the Generate button — belongs in the Controls panel. */
+  readonly specEl: HTMLElement;
+  /** The generated table — floats over the court. */
+  readonly overlayEl: HTMLElement;
+  open(): void;
+  close(): void;
+  isOpen(): boolean;
 }
+
+const CATEGORY_TEXT: Readonly<Record<CellCategory, string>> = {
+  airball: 'missed without touching the rim',
+  rim_miss: 'hit the rim, did not score',
+  rim_up: 'hit the rim, scored after bouncing up',
+  rim_down: 'hit the rim, scored, deflected down',
+  clean_make: 'scored without touching the rim',
+};
 
 function download(name: string, text: string, mime: string): void {
   const blob = new Blob([text], { type: mime });
@@ -53,14 +76,6 @@ function download(name: string, text: string, mime: string): void {
   a.click();
   URL.revokeObjectURL(url);
 }
-
-const CATEGORY_TEXT: Readonly<Record<CellCategory, string>> = {
-  airball: 'missed without touching the rim',
-  rim_miss: 'hit the rim, did not score',
-  rim_up: 'hit the rim, scored after bouncing up',
-  rim_down: 'hit the rim, scored, deflected down',
-  clean_make: 'scored without touching the rim',
-};
 
 function cellTitle(c: SweepCell, angle: number, speed: number): string {
   const lines = [
@@ -87,7 +102,7 @@ function buildLegend(clearanceScale: number | null): HTMLElement {
     sw.setAttribute(
       'style',
       entry.color === 'ramp'
-        ? `background: ${rampGradientCSS()}; width: 44px;`
+        ? `background: ${rampGradientCSS()}; width: 40px;`
         : `background: ${entry.color};`,
     );
     const label = document.createElement('span');
@@ -99,10 +114,7 @@ function buildLegend(clearanceScale: number | null): HTMLElement {
 }
 
 export function createTablePanel(deps: TablePanelDeps): TablePanelHandle {
-  const el = document.createElement('div');
-  el.className = 'tablepanel';
-
-  // --- Spec controls --------------------------------------------------------------------------
+  // --- Sweep spec (Controls panel) ------------------------------------------------------------
 
   const spec = {
     angleMin: 40,
@@ -115,8 +127,7 @@ export function createTablePanel(deps: TablePanelDeps): TablePanelHandle {
     speedStep: 0.02,
   };
 
-  const bar = document.createElement('div');
-  bar.className = 'tablebar';
+  const specEl = document.createElement('div');
 
   const mk = (
     id: string,
@@ -133,64 +144,52 @@ export function createTablePanel(deps: TablePanelDeps): TablePanelHandle {
       set(v);
       updateCount();
     });
-    h.el.classList.add('compact');
     return h.el;
   };
-
-  const angleGroup = document.createElement('div');
-  angleGroup.className = 'spec-group';
-  angleGroup.append(
-    mk('t-amin', 'Angle from', 0, 89, 0.5, spec.angleMin, '°', 1, (v) => (spec.angleMin = v)),
-    mk('t-amax', 'Angle to', 0, 89, 0.5, spec.angleMax, '°', 1, (v) => (spec.angleMax = v)),
-    mk('t-astep', 'Angle step', 0.25, 10, 0.25, spec.angleStep, '°', 2, (v) => (spec.angleStep = v)),
-  );
-
-  const speedGroup = document.createElement('div');
-  speedGroup.className = 'spec-group';
-  speedGroup.append(
-    mk('t-smin', 'Speed from', 0, MAX_SPEED, 0.05, spec.speedMin, 'm/s', 2, (v) => (spec.speedMin = v)),
-    mk('t-smax', 'Speed to', 0, MAX_SPEED, 0.05, spec.speedMax, 'm/s', 2, (v) => (spec.speedMax = v)),
-    mk('t-sstep', 'Speed step', 0.005, 1, 0.005, spec.speedStep, 'm/s', 3, (v) => (spec.speedStep = v)),
-  );
-
-  const actions = document.createElement('div');
-  actions.className = 'spec-group';
 
   const countNote = document.createElement('div');
   countNote.className = 'control-hint';
 
   const genBtn = createButton('Generate table', () => void generate(), 'primary');
-  const cancelBtn = createButton('Cancel', () => {
-    current?.cancel();
-  });
+  const cancelBtn = createButton('Cancel', () => current?.cancel());
   cancelBtn.disabled = true;
 
-  const showClearance = createToggle('Show clearance', true, (v) => {
+  const showClearance = createToggle('Show clearance numbers', true, (v) => {
     withClearance = v;
     if (table !== null) renderTable(table);
   });
 
-  actions.append(countNote, genBtn, cancelBtn, showClearance.el);
-  bar.append(angleGroup, speedGroup, actions);
+  specEl.append(
+    mk('t-amin', 'Angle from', 0, 89, 0.5, spec.angleMin, '°', 1, (v) => (spec.angleMin = v)),
+    mk('t-amax', 'Angle to', 0, 89, 0.5, spec.angleMax, '°', 1, (v) => (spec.angleMax = v)),
+    mk('t-astep', 'Angle step', 0.25, 10, 0.25, spec.angleStep, '°', 2, (v) => (spec.angleStep = v)),
+    mk('t-smin', 'Speed from', 0, MAX_SPEED, 0.05, spec.speedMin, 'm/s', 2, (v) => (spec.speedMin = v)),
+    mk('t-smax', 'Speed to', 0, MAX_SPEED, 0.05, spec.speedMax, 'm/s', 2, (v) => (spec.speedMax = v)),
+    mk('t-sstep', 'Speed step', 0.005, 1, 0.005, spec.speedStep, 'm/s', 3, (v) => (spec.speedStep = v)),
+    showClearance.el,
+    countNote,
+  );
 
-  const exportBar = document.createElement('div');
-  exportBar.className = 'tablebar exports';
-  const expLong = createButton('CSV (one row per cell)', () => {
-    if (table !== null) download('outcome-table-long.csv', tableToLongCSV(table), 'text/csv');
-  });
-  const expMade = createButton('CSV (make matrix)', () => {
-    if (table !== null) download('outcome-made-matrix.csv', tableToMatrixCSV(table, 'made'), 'text/csv');
-  });
-  const expClear = createButton('CSV (clearance matrix)', () => {
-    if (table !== null)
-      download('outcome-clearance-matrix.csv', tableToMatrixCSV(table, 'clearance'), 'text/csv');
-  });
-  const expJson = createButton('JSON', () => {
-    if (table !== null) download('outcome-table.json', tableToJSON(table), 'application/json');
-  });
+  const specButtons = document.createElement('div');
+  specButtons.className = 'row';
+  specButtons.append(genBtn, cancelBtn);
+  specEl.append(specButtons);
+
+  // --- Overlay (over the court) ---------------------------------------------------------------
+
+  const overlayEl = document.createElement('div');
+  overlayEl.className = 'table-overlay hidden';
+  overlayEl.id = 'table-overlay';
+
+  const head = document.createElement('div');
+  head.className = 'overlay-head';
+  const title = document.createElement('h2');
+  title.textContent = 'Outcome table';
   const summaryNote = document.createElement('div');
-  summaryNote.className = 'control-hint';
-  exportBar.append(expLong, expMade, expClear, expJson, summaryNote);
+  summaryNote.className = 'overlay-summary';
+  const closeBtn = createButton('✕', () => close(), 'panel-close');
+  closeBtn.setAttribute('aria-label', 'Hide the outcome table');
+  head.append(title, summaryNote, closeBtn);
 
   let legend = buildLegend(null);
 
@@ -199,14 +198,48 @@ export function createTablePanel(deps: TablePanelDeps): TablePanelHandle {
   const placeholder = document.createElement('p');
   placeholder.className = 'control-hint';
   placeholder.textContent =
-    'Generate a table to sweep power against release angle. Each cell is a full simulation: 1 = basket, 0 = miss, with the clearance to the nearest rim tube in centimetres.';
+    'Set the sweep ranges in the Controls panel and press Generate. Each cell is a full simulation: 1 = basket, 0 = miss, with the clearance to the nearest rim tube in centimetres.';
   scroller.append(placeholder);
 
-  el.append(bar, legend, exportBar, scroller);
+  const exportBar = document.createElement('div');
+  exportBar.className = 'overlay-exports';
+  const expLong = createButton('CSV rows', () => {
+    if (table !== null) download('outcome-table-long.csv', tableToLongCSV(table), 'text/csv');
+  });
+  const expMade = createButton('CSV makes', () => {
+    if (table !== null) download('outcome-made-matrix.csv', tableToMatrixCSV(table, 'made'), 'text/csv');
+  });
+  const expClear = createButton('CSV clearance', () => {
+    if (table !== null)
+      download('outcome-clearance-matrix.csv', tableToMatrixCSV(table, 'clearance'), 'text/csv');
+  });
+  const expJson = createButton('JSON', () => {
+    if (table !== null) download('outcome-table.json', tableToJSON(table), 'application/json');
+  });
+  exportBar.append(expLong, expMade, expClear, expJson);
+
+  overlayEl.append(head, legend, scroller, exportBar);
+
+  // --- State ----------------------------------------------------------------------------------
 
   let table: SweepTable | null = null;
   let withClearance = true;
   let current: { cancel(): void } | null = null;
+  let open_ = false;
+
+  function open(): void {
+    if (open_) return;
+    open_ = true;
+    overlayEl.classList.remove('hidden');
+    deps.onVisibilityChange?.(true);
+  }
+
+  function close(): void {
+    if (!open_) return;
+    open_ = false;
+    overlayEl.classList.add('hidden');
+    deps.onVisibilityChange?.(false);
+  }
 
   function currentSpec(): SweepSpec {
     const base = {
@@ -237,8 +270,19 @@ export function createTablePanel(deps: TablePanelDeps): TablePanelHandle {
       `${n.toLocaleString()} cells` + (n > BIG_TABLE ? ' — large, may take a few seconds' : '');
   }
 
+  function progressNode(done: number, total: number): HTMLElement {
+    const wrap = document.createElement('div');
+    wrap.className = 'tableprogress';
+    const pct = total === 0 ? 0 : Math.round((done / total) * 100);
+    wrap.textContent = `Simulating… ${done.toLocaleString()} / ${total.toLocaleString()} shots (${pct}%)`;
+    return wrap;
+  }
+
   async function generate(): Promise<void> {
     const s = currentSpec();
+    // Generating is what brings the table on screen — the client's "generate overlapping the
+    // simulation". No separate step to go and look at it.
+    open();
     genBtn.disabled = true;
     cancelBtn.disabled = false;
     scroller.replaceChildren(progressNode(0, cellCount(s)));
@@ -273,14 +317,6 @@ export function createTablePanel(deps: TablePanelDeps): TablePanelHandle {
     }
   }
 
-  function progressNode(done: number, total: number): HTMLElement {
-    const wrap = document.createElement('div');
-    wrap.className = 'tableprogress';
-    const pct = total === 0 ? 0 : Math.round((done / total) * 100);
-    wrap.textContent = `Simulating… ${done.toLocaleString()} / ${total.toLocaleString()} shots (${pct}%)`;
-    return wrap;
-  }
-
   function renderTable(t: SweepTable): void {
     // The ramp is scaled to the clean makes actually in this table — see colors.ts for why the
     // geometric ceiling would waste most of the gradient.
@@ -298,7 +334,7 @@ export function createTablePanel(deps: TablePanelDeps): TablePanelHandle {
     const hr = document.createElement('tr');
     const corner = document.createElement('th');
     corner.className = 'corner';
-    corner.innerHTML = 'power&nbsp;↓<br>angle&nbsp;→';
+    corner.innerHTML = 'pwr&nbsp;↓<br>ang&nbsp;→';
     hr.append(corner);
     for (const a of t.angles) {
       const th = document.createElement('th');
@@ -314,7 +350,7 @@ export function createTablePanel(deps: TablePanelDeps): TablePanelHandle {
       const tr = document.createElement('tr');
       const th = document.createElement('th');
       th.className = 'rowhead';
-      th.innerHTML = `${speed.toFixed(2)}<small> m/s · ${((speed / MAX_SPEED) * 100).toFixed(0)}%</small>`;
+      th.innerHTML = `${speed.toFixed(2)}<small> m/s</small>`;
       tr.append(th);
 
       t.angles.forEach((angle, ai) => {
@@ -353,10 +389,8 @@ export function createTablePanel(deps: TablePanelDeps): TablePanelHandle {
     const pct = total === 0 ? 0 : (t.madeCount / total) * 100;
     const best = bestCell(t);
     summaryNote.textContent =
-      `${t.madeCount} / ${total} made (${pct.toFixed(1)}%)` +
-      (best === null
-        ? ''
-        : ` · widest margin: ${(best.cell.clearance * 100).toFixed(1)} cm at ${best.angle.toFixed(1)}°, ${best.speed.toFixed(3)} m/s`);
+      `${t.madeCount}/${total} made (${pct.toFixed(0)}%)` +
+      (best === null ? '' : ` · best ${(best.cell.clearance * 100).toFixed(1)} cm at ${best.angle.toFixed(1)}°`);
   }
 
   /** The made shot with the most room to spare — the centre of the sweet spot. */
@@ -375,5 +409,5 @@ export function createTablePanel(deps: TablePanelDeps): TablePanelHandle {
   }
 
   updateCount();
-  return { el };
+  return { specEl, overlayEl, open, close, isOpen: () => open_ };
 }

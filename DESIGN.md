@@ -1,6 +1,6 @@
 # Free Throw Simulator — Design Doc
 
-Status: **M0–M7 implemented** (100 tests passing) · Date: 2026-10-13 ·
+Status: **M0–M7 implemented** (116 tests passing) · Date: 2026-10-30 ·
 Repo: `wr_basketball_physics`
 
 Where the build corrected this document, the document has been corrected rather than quietly
@@ -405,7 +405,7 @@ asserted over 150 randomised shots in `tests/determinism.spec.ts`.
 ## 7. Controls and UI
 
 Layout: the canvas fills the window, a right-hand panel holds the controls, a bottom drawer holds
-the log and the outcome table.
+the log, and the outcome table floats over the court at the bottom right (§12).
 
 **The controls panel is hidden by default**, with a single `⚙ Controls` button at the top-right of
 the court as the only chrome over it (opposite the HUD, which sits top-left). The button toggles it,
@@ -683,12 +683,50 @@ built, and are not needed until the grid grows past ~20k cells:
    adjacent to an outcome boundary. The map appears instantly and sharpens; most of the interior is
    uniform and never needs refining.
 
-**UI.** A tab in the bottom drawer alongside the log. Six range controls (angle and speed: from, to,
-step), a live cell count that warns above 6000, a progress readout, and cancel. Clicking any cell
-loads that shot into the controls and fires it, so the table doubles as a shot browser — and since
-both come from the same core, the court always does exactly what the cell says. The table is
-generated on demand rather than recomputed on every parameter change, because a sweep is a
-deliberate act, not a side effect of nudging a slider.
+**UI.** Split across two places, because the two halves belong in different places:
+
+- The **sweep ranges** (angle and speed: from, to, step), the live cell count, Generate and Cancel
+  live in the Controls panel with every other variable.
+- The **table itself** floats over the court at the bottom right, under the basket. Generating is
+  what brings it up — there is no separate step to go and look at it.
+
+Clicking any cell loads that shot into the controls and fires it, so the table doubles as a shot
+browser — and since both come from the same core, the court always does exactly what the cell says.
+The table is generated on demand rather than recomputed on every parameter change, because a sweep
+is a deliberate act, not a side effect of nudging a slider.
+
+### Where the overlay sits, and why it fades
+
+The brief was: bottom right, under the basket, not overlapping the parts the ball passes through on
+a successful shot. **The last part turns out to be impossible**, and the measurement is worth
+keeping because it is counter-intuitive.
+
+A made shot does not drop vertically through the net. It enters at roughly a 40° angle and caroms
+forward-right out of the hoop at about 4.5 m/s — the default shot crosses the right edge of the view
+still 1.43 m up and only reaches the floor off-screen at x ≈ 7.7 m. The exit path therefore owns the
+bottom-right of the view. Sweeping 432 made shots against candidate rectangles anchored to the floor:
+
+| right edge | top | clears the default shot | made shots crossing |
+|---|---|---|---|
+| 6.20 m | 1.40 m | yes | 75% |
+| 6.40 m | 1.60 m | yes | 90% |
+| 6.55 m | 1.80 m | no | 99% |
+| 7.00 m | any | no | 100% |
+
+Flush to the right edge of the view, *every* made shot crosses it. The only region genuinely clear
+of made-shot flight paths is the lower **left** — which is where the shooter stands.
+
+So the placement (`TABLE_OVERLAY_RECT` in `render/camera.ts`) is the best available compromise: a
+3.0 × 1.85 m box on the floor under the basket, right edge pulled in to 6.4 m to leave the carom a
+gutter, chosen to clear **the default shot** — the one you get by just pressing Space — with 15 cm
+to spare. For the rest, the overlay **fades to 12% opacity while the ball is over it**. The canvas
+is behind the DOM, so fading the panel is the only way for the ball to show through; the effect is
+that the table never actually hides the ball, which is what the brief was really asking for.
+
+The rect is defined in world coordinates and positioned through the camera transform on every
+layout, so it stays anchored to the court geometry at any window size rather than drifting relative
+to the basket. On a window too small for the world rect to be readable, it grows up and left from
+its corner and accepts the overlap, which the fade covers.
 
 Exports: long CSV (one row per cell — for plotting), make-matrix CSV and clearance-matrix CSV (for
 pasting into a spreadsheet), and JSON (everything, including the spec and `physicsVersion`).
@@ -727,6 +765,7 @@ trust from an earlier read:
 | `server.watch` | default | `usePolling: true` | Windows Vite cannot `fs.watch` the repo over `\\wsl.localhost` — it dies with EISDIR. See README. |
 | Rim clearance | front rim only, sampled at step endpoints, frozen at the scoring instant | nearest of both tubes, measured against the swept path, frozen after the ball passes the rim, clamped to 0 on contact | Promoting clearance to a reported client-facing number exposed three separate ways the old stat was wrong — each worth a few millimetres to centimetres on a quantity that tops out at 10.9 cm (§12). |
 | M7 output | heatmap | table of 1/0 + clearance, with a heatmap as an optional follow-up | Client asked for a table. |
+| Table location | bottom drawer, full width | floating overlay over the court, bottom right under the basket; ranges moved into the Controls panel | Client asked for it to overlap the simulation. "Clear of the ball's path on a successful shot" proved impossible — the exit carom owns that corner — so the placement clears the *default* shot and the overlay fades while the ball is over it (§12). |
 | "On the way in" window | closed at the scoring plane | closes when the ball falls clear of the rim | A ball can cross the plane and then clip the back of the rim from inside. The old window called that a clean swish with a rim contact attached (§6). |
 | Default release speed | 7.23 m/s | **7.184 m/s** | 7.23 is a make but kisses the rim; 7.184 is the maximum-clearance clean make at 52°, so the first shot fired is a true swish (§3). |
 | Clearance ramp scale | 10.89 cm geometric ceiling | the table's own largest clean-make clearance | A free throw enters at ~40°, so real clean makes reach only ~2 cm. Against the ceiling the gradient would never leave the reds (§12). |

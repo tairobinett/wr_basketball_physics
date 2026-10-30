@@ -16,7 +16,7 @@ decisions log.
 npm install
 npm run dev        # dev server (prints the URL)
 npm run build      # typecheck + production build into dist/
-npm test           # 100 tests
+npm test           # 116 tests
 npm run typecheck  # tsc --noEmit
 ```
 
@@ -48,6 +48,7 @@ The controls panel is hidden on load — the court gets the whole window, and a 
 | Input | Action |
 |---|---|
 | `⚙ Controls` button / `M` | show or hide the controls panel |
+| `▦ Table` button / `T` | show or hide the outcome table |
 | `Space` | shoot |
 | `R` | reset |
 | `↑` / `↓` | release angle (hold `Shift` for 0.1° steps) |
@@ -64,8 +65,11 @@ sim is deterministic — see DESIGN.md §4.1.
 
 ## Outcome table
 
-The **Outcome table** tab in the bottom drawer sweeps power against release angle and reports two
-numbers per cell:
+Set the sweep ranges in the Controls panel and press **Generate table**; the result appears as a
+panel floating over the court at the bottom right, under the basket. `▦ Table` or `T` shows and
+hides it.
+
+It sweeps power against release angle and reports two numbers per cell:
 
 - **`1` / `0`** — basket or miss. Each cell is a full simulation with an exact verdict; there is no
   sampling or probability anywhere in it.
@@ -75,7 +79,7 @@ numbers per cell:
   ball dropping dead centre through the hoop), but a free throw arrives at ~40° and threads the
   hoop diagonally, so real clean makes from the line reach only about 2 cm at 52°.
 
-Cells are coloured by category, with a legend under the controls:
+Cells are coloured by category, with a legend along the top of the overlay:
 
 | Colour | Cell |
 |---|---|
@@ -92,11 +96,22 @@ from the line only reach ~2 cm at 52° — against the geometric scale the whole
 of red. Most makes from the free-throw line do touch the rim, so blue and orange dominate the made
 region and red/magenta marks the genuinely clean ones.
 
-Set the angle and speed ranges and steps, hit Generate, and click any cell to fire that exact shot
-on the court. Exports: long CSV (one row per cell, including the colour category), make-matrix CSV,
-clearance-matrix CSV, and JSON.
+Click any cell to fire that exact shot on the court. Exports: long CSV (one row per cell, including
+the colour category), make-matrix CSV, clearance-matrix CSV, and JSON.
 
 The sweep runs in a Web Worker so the UI stays responsive, at roughly 0.25 ms per simulated shot.
+
+### Why the table fades during a shot
+
+It sits under the basket, clear of the path the default shot takes — but a made shot doesn't drop
+vertically through the net. It enters at about 40° and caroms forward-right out of the hoop at
+~4.5 m/s, so the bottom-right of the court is exactly where the ball goes. Measured over 432 made
+shots, *every* rectangle flush with the right edge of the view is crossed by all of them, and the
+one actually used is crossed by about 90%.
+
+Rather than let the panel hide the ball, it fades to near-transparent while the ball is over it and
+comes back afterwards. The only part of the court genuinely clear of made-shot paths is the lower
+left, where the shooter stands.
 
 Worth knowing when reading a table: through the middle of the make band most shots graze the rim,
 so a coarse table fills up with `hit`. That is real — the hoop is 45.7 cm and the ball 23.9 cm, so

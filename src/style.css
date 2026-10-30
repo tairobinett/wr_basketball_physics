@@ -205,6 +205,11 @@ canvas.court {
   font-weight: 600;
 }
 
+/* Sits to the left of the Controls button. */
+.table-toggle {
+  right: 112px;
+}
+
 .panel {
   grid-area: panel;
   border-left: 1px solid var(--line);
@@ -370,8 +375,7 @@ button.primary {
   max-height: 46vh;
 }
 
-.drawer.collapsed .logpanel,
-.drawer.collapsed .tablepanel {
+.drawer.collapsed .logpanel {
   display: none;
 }
 
@@ -469,79 +473,100 @@ button.primary {
   color: var(--muted);
 }
 
-/* --- Drawer tabs ---------------------------------------------------------------------------- */
-
-.tabs {
-  display: flex;
-  gap: 4px;
-  flex: 1;
-}
-
-button.tab {
-  background: transparent;
-  border: 1px solid transparent;
-  border-bottom: none;
-  color: var(--muted);
-  border-radius: 4px 4px 0 0;
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-}
-
-button.tab.on {
-  background: var(--panel-2);
-  border-color: var(--line);
-  color: var(--text);
-}
-
 .hidden {
   display: none !important;
 }
 
-/* --- Outcome table -------------------------------------------------------------------------- */
+/* --- Outcome table overlay ------------------------------------------------------------------ */
 
-.tablepanel {
+/* Floats over the court at the bottom right, under the basket. Its exact box is set from world
+   coordinates in JS (see render/camera.ts TABLE_OVERLAY_RECT), so it stays anchored to the court
+   geometry at any window size — the left/top/width/height here are placeholders. */
+.table-overlay {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 360px;
+  height: 200px;
+  z-index: 2;
   display: flex;
   flex-direction: column;
   min-height: 0;
+  background: rgba(11, 14, 20, 0.93);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(3px);
+  overflow: hidden;
+  transition: opacity 140ms ease;
 }
 
-.tablebar {
+/* The ball is about to pass through this space: get out of its way rather than hide it. The canvas
+   is behind the DOM, so fading the panel is the only way for the ball to show through. */
+.table-overlay.ball-over {
+  opacity: 0.12;
+  pointer-events: none;
+}
+
+.overlay-head {
   display: flex;
-  gap: 18px;
-  align-items: flex-end;
-  flex-wrap: wrap;
-  padding: 0 12px 8px;
-}
-
-.tablebar.exports {
+  align-items: baseline;
   gap: 8px;
-  align-items: center;
-  border-top: 1px solid var(--line);
-  padding-top: 8px;
+  padding: 6px 8px 6px 10px;
+  border-bottom: 1px solid var(--line);
+  flex: none;
 }
 
-.spec-group {
-  display: flex;
-  gap: 10px;
-  align-items: flex-end;
-}
-
-.control.compact {
-  width: 120px;
+.overlay-head h2 {
   margin: 0;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--muted);
+  white-space: nowrap;
 }
 
-.control.compact .control-head label {
-  font-size: 11px;
-  color: var(--muted);
+.overlay-summary {
+  flex: 1;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.overlay-exports {
+  display: flex;
+  gap: 4px;
+  padding: 5px 8px;
+  border-top: 1px solid var(--line);
+  flex: none;
+}
+
+.overlay-exports button {
+  padding: 2px 6px;
+  font-size: 10px;
+}
+
+.table-overlay .tablelegend {
+  padding: 5px 10px;
+  gap: 9px;
+  font-size: 10px;
+  flex: none;
+  border-bottom: 1px solid var(--line);
+}
+
+.table-overlay .control-hint {
+  padding: 8px 10px;
+  margin: 0;
 }
 
 .tablescroll {
   overflow: auto;
-  max-height: 420px;
-  padding: 0 12px 12px;
-  min-height: 60px;
+  flex: 1;
+  min-height: 0;
+  padding: 0 8px 6px;
 }
 
 .tableprogress {

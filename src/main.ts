@@ -17,6 +17,7 @@ import {
   MAX_SPEED,
   RELEASE_Y_MAX,
   RELEASE_Y_MIN,
+  R_BALL,
   SHOOTER_X_MAX,
   SHOOTER_X_MIN,
 } from './core/constants.js';
@@ -30,7 +31,8 @@ import type { World } from './core/world.js';
 import { REGULATION_LEVEL } from './levels/default.js';
 import { buildWorld, validateLevel } from './levels/schema.js';
 import { RingLogger } from './log/logger.js';
-import { fitCamera } from './render/camera.js';
+import type { PixelRect } from './render/camera.js';
+import { ballOverlapsRect, fitCamera, placeOverlay } from './render/camera.js';
 import {
   COLORS,
   drawBackground,
@@ -238,6 +240,7 @@ help.innerHTML = `
     <li><b>← / →</b> — power (hold Shift for fine)</li>
     <li><b>Drag from the shooter</b> — aim by direction, power by distance</li>
     <li><b>M</b> — show/hide the controls panel</li>
+    <li><b>T</b> — show/hide the outcome table</li>
     <li><b>P</b> — pause, <b>.</b> — single step</li>
     <li><b>G</b> — predicted arc, <b>C</b> — collider wireframe</li>
     <li><b>?</b> — this panel</li>
@@ -515,7 +518,7 @@ function setOverride(id: MaterialId, e: number, mu: number): void {
 
 // --- Log drawer ------------------------------------------------------------------------------
 
-const logPanel = createLogPanel(logger);
+// --- Outcome table: ranges in the panel, the table itself over the court ----------------------
 
 const tablePanel = createTablePanel({
   getWorld: () => world,
@@ -533,39 +536,58 @@ const tablePanel = createTablePanel({
     rebuildGhost();
     release();
   },
+  onVisibilityChange: (open) => {
+    tableToggle.classList.toggle('on', open);
+    tableToggle.setAttribute('aria-expanded', String(open));
+    if (open) placeTableOverlay();
+  },
 });
+
+panel.append(createSection('Outcome table', tablePanel.specEl));
+
+canvasWrap.append(tablePanel.overlayEl);
+
+const tableToggle = createButton(
+  '▦ Table',
+  () => (tablePanel.isOpen() ? tablePanel.close() : tablePanel.open()),
+  'panel-toggle table-toggle',
+);
+tableToggle.title = 'Show the outcome table (T)';
+tableToggle.setAttribute('aria-controls', 'table-overlay');
+tableToggle.setAttribute('aria-expanded', 'false');
+canvasWrap.append(tableToggle);
+
+/**
+ * Put the overlay where camera.ts says: bottom-right, under the basket, just below the path a made
+ * shot takes as it caroms out of the hoop.
+ */
+let tableRect: PixelRect | null = null;
+
+function placeTableOverlay(): void {
+  if (!layoutReady || !tablePanel.isOpen()) return;
+  const rect = placeOverlay(currentCamera(), cssW, cssH, 300, 180);
+  tableRect = rect;
+  const style = tablePanel.overlayEl.style;
+  style.left = `${rect.left}px`;
+  style.top = `${rect.top}px`;
+  style.width = `${rect.width}px`;
+  style.height = `${rect.height}px`;
+}
+
+const logPanel = createLogPanel(logger);
 
 const drawer = document.createElement('div');
 drawer.className = 'drawer';
 const drawerHead = document.createElement('div');
 drawerHead.className = 'drawer-head';
-
-const tabs = document.createElement('div');
-tabs.className = 'tabs';
-const logTab = createButton('Log', () => showTab('log'), 'tab on');
-const tableTab = createButton('Outcome table', () => showTab('table'), 'tab');
-tabs.append(logTab, tableTab);
-
+const drawerTitle = document.createElement('h2');
+drawerTitle.textContent = 'Log';
 const collapseBtn = createButton('hide', () => {
   drawer.classList.toggle('collapsed');
   collapseBtn.textContent = drawer.classList.contains('collapsed') ? 'show' : 'hide';
 });
-
-drawerHead.append(tabs, collapseBtn);
-drawer.append(drawerHead, logPanel.el, tablePanel.el);
-
-function showTab(which: 'log' | 'table'): void {
-  const onLog = which === 'log';
-  logPanel.el.classList.toggle('hidden', !onLog);
-  tablePanel.el.classList.toggle('hidden', onLog);
-  logTab.className = onLog ? 'tab on' : 'tab';
-  tableTab.className = onLog ? 'tab' : 'tab on';
-  // Opening a tab on a collapsed drawer should open the drawer too.
-  drawer.classList.remove('collapsed');
-  collapseBtn.textContent = 'hide';
-}
-
-showTab('log');
+drawerHead.append(drawerTitle, collapseBtn);
+drawer.append(drawerHead, logPanel.el);
 
 app.append(canvasWrap, panel, drawer);
 
@@ -655,6 +677,11 @@ window.addEventListener('keydown', (e) => {
     case 'M':
       setControlsOpen(!controlsOpen);
       break;
+    case 't':
+    case 'T':
+      if (tablePanel.isOpen()) tablePanel.close();
+      else tablePanel.open();
+      break;
     case 'g':
     case 'G':
       view.ghost = !view.ghost;
@@ -736,6 +763,9 @@ function resize(): void {
   canvas.style.width = `${cssW}px`;
   canvas.style.height = `${cssH}px`;
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  // The overlay is anchored to court geometry, so it has to be repositioned whenever the camera
+  // changes — which includes opening and closing the controls panel, not just window resizes.
+  placeTableOverlay();
 }
 
 function currentCamera() {
@@ -799,6 +829,17 @@ function draw(): void {
   const alpha = sim.phase === 'flight' ? clamp(acc / DT, 0, 1) : 1;
   const shown = { ...sim.ball, p: lerp(prevBall.p, sim.ball.p, alpha) };
   drawBall(ctx, cam, shown);
+
+  // The table sits under the basket, clear of the path a typical made shot takes out of the hoop
+  // (see camera.ts). Rattle makes drop far more steeply and do land inside the view, so rather than
+  // let the panel ever hide the ball, it fades while the ball is over it. The canvas is behind the
+  // DOM, so fading the panel is the only way for the ball to show through.
+  if (tablePanel.isOpen() && tableRect !== null) {
+    const s = cam.toScreen(shown.p);
+    const overlapping =
+      sim.phase === 'flight' && ballOverlapsRect(tableRect, s.x, s.y, cam.px(R_BALL) + 6);
+    tablePanel.overlayEl.classList.toggle('ball-over', overlapping);
+  }
 
   if (view.velocity) drawVelocity(ctx, cam, shown);
   if (sim.phase !== 'flight') {

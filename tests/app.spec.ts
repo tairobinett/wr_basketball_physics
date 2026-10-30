@@ -120,7 +120,8 @@ describe('app boots', () => {
     it('closes from the panel’s own close button', () => {
       toggle().click();
       expect(panel().classList.contains('hidden')).toBe(false);
-      (document.querySelector('.panel-close') as HTMLButtonElement).click();
+      // Scoped: the table overlay has a close button of its own, earlier in document order.
+      (document.querySelector('.panel > .panel-head .panel-close') as HTMLButtonElement).click();
       expect(panel().classList.contains('hidden')).toBe(true);
       expect(toggle().getAttribute('aria-expanded')).toBe('false');
     });
@@ -175,21 +176,50 @@ describe('app boots', () => {
     expect(help?.classList.contains('hidden')).toBe(true);
   });
 
-  it('switches to the outcome table tab', () => {
-    const tabs = [...document.querySelectorAll('button.tab')] as HTMLButtonElement[];
-    const tableTab = tabs.find((b) => b.textContent === 'Outcome table');
-    expect(tableTab).toBeDefined();
-    tableTab?.click();
-    expect(document.querySelector('.tablepanel')?.classList.contains('hidden')).toBe(false);
-    expect(document.querySelector('.logpanel')?.classList.contains('hidden')).toBe(true);
+  it('keeps the outcome table overlay hidden until asked for', () => {
+    const overlay = document.querySelector('.table-overlay');
+    expect(overlay).not.toBeNull();
+    expect(overlay?.classList.contains('hidden')).toBe(true);
+    const toggle = document.querySelector('.table-toggle') as HTMLButtonElement;
+    expect(toggle).not.toBeNull();
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    expect(toggle.getAttribute('aria-controls')).toBe('table-overlay');
+  });
+
+  it('opens and closes the overlay from its button and the T key', () => {
+    const overlay = document.querySelector('.table-overlay') as HTMLElement;
+    const toggle = document.querySelector('.table-toggle') as HTMLButtonElement;
+
+    toggle.click();
+    expect(overlay.classList.contains('hidden')).toBe(false);
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    expect(toggle.classList.contains('on')).toBe(true);
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 't', bubbles: true }));
+    expect(overlay.classList.contains('hidden')).toBe(true);
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+  });
+
+  it('puts the sweep ranges in the controls panel, not the overlay', () => {
+    // The ranges are variables, so they belong with the other variables.
+    for (const id of ['slider-t-amin', 'slider-t-amax', 'slider-t-smin', 'slider-t-sstep']) {
+      const el = document.getElementById(id);
+      expect(el, id).not.toBeNull();
+      expect(el?.closest('.panel'), id).not.toBeNull();
+      expect(el?.closest('.table-overlay'), id).toBeNull();
+    }
   });
 
   it('generates a table with a binary result and a clearance per cell', async () => {
     // jsdom has no Worker, so this runs the synchronous fallback — same pure sweep function.
-    const buttons = [...document.querySelectorAll('.tablebar button')] as HTMLButtonElement[];
-    const gen = buttons.find((b) => b.textContent === 'Generate table');
+    const gen = [...document.querySelectorAll('.panel button')].find(
+      (b) => b.textContent === 'Generate table',
+    ) as HTMLButtonElement | undefined;
     expect(gen).toBeDefined();
     gen?.click();
+
+    // Generating is what brings the overlay up — no separate step to go and look at it.
+    expect(document.querySelector('.table-overlay')?.classList.contains('hidden')).toBe(false);
 
     // Let the (already-resolved) promise and its .then chain flush.
     await new Promise((r) => setTimeout(r, 0));
@@ -221,12 +251,25 @@ describe('app boots', () => {
     expect(madeValues).toContain('1');
     expect(madeValues).toContain('0');
 
-    // And the summary line reports the make rate plus the widest margin found.
-    const summary = [...document.querySelectorAll('.exports .control-hint')]
-      .map((n) => n.textContent)
-      .join(' ');
-    expect(summary).toMatch(/\d+ \/ \d+ made/);
-    expect(summary).toMatch(/widest margin: \d+(\.\d+)? cm/);
+    // And the overlay's header reports the make rate plus the widest margin found.
+    const summary = document.querySelector('.overlay-summary')?.textContent ?? '';
+    expect(summary).toMatch(/\d+\/\d+ made/);
+    expect(summary).toMatch(/best \d+(\.\d+)? cm/);
+  });
+
+  it('renders the table inside the overlay, over the court', () => {
+    const table = document.querySelector('table.outcome-table');
+    expect(table).not.toBeNull();
+    // It must be in the floating overlay, which must itself be over the canvas.
+    expect(table?.closest('.table-overlay')).not.toBeNull();
+    expect(document.querySelector('.table-overlay')?.closest('.court-wrap')).not.toBeNull();
+    expect(document.querySelector('.table-overlay')?.closest('.drawer')).toBeNull();
+  });
+
+  it('keeps the log drawer for the log alone', () => {
+    expect(document.querySelector('.drawer .logpanel')).not.toBeNull();
+    expect(document.querySelector('.drawer .table-overlay')).toBeNull();
+    expect(document.querySelector('button.tab')).toBeNull();
   });
 
   it('fires the shot for a table cell that is clicked', () => {
@@ -241,6 +284,15 @@ describe('app boots', () => {
     // The court is now simulating that cell's shot, and the log recorded the release.
     const logText = document.querySelector('.logout')?.textContent ?? '';
     expect(logText).toContain('RELEASE');
+  });
+
+  it('offers the table exports in the overlay', () => {
+    const labels = [...document.querySelectorAll('.overlay-exports button')].map(
+      (b) => b.textContent,
+    );
+    expect(labels).toContain('CSV rows');
+    expect(labels).toContain('CSV clearance');
+    expect(labels).toContain('JSON');
   });
 
   it('offers the log filters and exports', () => {
